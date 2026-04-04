@@ -1,0 +1,40 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Data & backups
+data/
+spotify_backup.sql
+
+# Dependencies
+node_modules/
+
+# Frontend artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/coverage/
+frontend/.vercel/
+frontend/*.tsbuildinfo
+
+# Backend artifacts
+__pycache__/
+*.pyc
+backend/.venv/
+backend/venv/
+backend/.pytest_cache/
+backend/.ruff_cache/
+
+# Nested git metadata from previous split repos
+frontend/.git/
+backend/.git/
+
+# IDE / tooling
+.opencode/
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
