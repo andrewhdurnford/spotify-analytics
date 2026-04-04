@@ -33,6 +33,7 @@ backend/.git/
 
 # IDE / tooling
 .opencode/
+AGENTS.md
 .idea/
 .vscode/
 *.swp
