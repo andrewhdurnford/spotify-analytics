@@ -44,5 +44,6 @@ docker compose exec backend alembic history
 ## Notes
 
 - The database URL is loaded from your environment variables via `app/config.py` -- no credentials in `alembic.ini`.
+- `DATABASE_URL` must target your external Postgres instance and include `sslmode=require`.
 - Migration files in `migrations/versions/` should be committed to git.
 - If the backend container isn't running, start it first with `docker compose up -d backend`.
