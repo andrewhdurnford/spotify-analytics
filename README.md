@@ -75,6 +75,17 @@ SYNC_MAX_WAIT_SECONDS=25
 
 The local loop uses the same completion-aware sync as the cron endpoint.
 
+## Frontend Environment
+
+For local frontend development, create `frontend/.env.local`:
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000
+API_URL=http://localhost:8000
+```
+
+Use the deployed backend URL for both values in hosted frontend environments.
+
 ## CI Checks
 
 - GitHub Actions workflow: `.github/workflows/ci.yml`
