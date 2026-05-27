@@ -39,7 +39,11 @@ def parse_spotify_date(date_string):
 
 # --- added helper to detect skipped records ---
 def is_skipped_item(item: dict) -> bool:
-    """Return True if the JSON record indicates the track was skipped"""
+    """Return True if the JSON record indicates the track was not completed."""
+    reason_end = item.get("reason_end")
+    if reason_end and reason_end != "trackdone":
+        return True
+
     keys_to_check = ("skipped", "is_skipped", "skipped_flag", "skipped?")
     for k in keys_to_check:
         if k not in item:

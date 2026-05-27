@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # Cron Authentication - for external cron services like cron-job.org
     cron_secret: str = ""  # Set this in production!
 
+    # Local playback sync loop
+    enable_local_sync: bool = False
+    local_sync_interval_seconds: int = 30
+    sync_max_wait_seconds: int = 25
+
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, value: str) -> str:

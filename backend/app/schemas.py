@@ -28,6 +28,16 @@ class TopAlbum(BaseModel):
     play_count: int
 
 
+class ListeningStats(BaseModel):
+    total_play_count: int
+    total_listening_ms: int
+    unique_songs: int
+    unique_artists: int
+    unique_albums: int
+    active_days: int
+    average_play_ms: int
+
+
 class AvailablePeriods(BaseModel):
     years: list[int]
     earliest_date: str | None = None

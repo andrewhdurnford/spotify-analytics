@@ -62,6 +62,25 @@ docker compose exec frontend npm test -- --run
 docker compose exec backend alembic current
 ```
 
+## Optional Local Playback Sync
+
+The hosted app can still be pinged by an external cron every minute, but local
+development can also run an in-process playback sync loop. Set this in `.env`:
+
+```bash
+ENABLE_LOCAL_SYNC=true
+LOCAL_SYNC_INTERVAL_SECONDS=30
+SYNC_MAX_WAIT_SECONDS=25
+```
+
+The local loop uses the same completion-aware sync as the cron endpoint.
+
+## CI Checks
+
+- GitHub Actions workflow: `.github/workflows/ci.yml`
+- Triggered on pull requests and pushes to `main`
+- Runs backend checks (`ruff check .`, `pytest`) and frontend checks (`npm run lint`, `npm test -- --run`)
+
 ## Troubleshooting External Postgres
 
 - `DATABASE_URL` must include `sslmode=require`

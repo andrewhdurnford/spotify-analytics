@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ..models import Artist, Stream, Track
 from ..schemas import (
     AvailablePeriods,
+    ListeningStats,
     RecentlyPlayedItem,
     RecentlyPlayedResponse,
     TopAlbum,
@@ -215,6 +216,58 @@ def get_top_albums(
         )
         for r in results
     ]
+
+
+def get_listening_stats(
+    db: Session,
+    timeframe: str,
+    base_date: datetime,
+) -> ListeningStats:
+    """Return aggregate listening stats for the selected period."""
+    start, end = get_date_range(timeframe, base_date)
+
+    song_key = func.coalesce(Stream.track_id, Stream.track_name)
+    artist_key = func.coalesce(Stream.artist_id, Stream.artist_name)
+
+    stmt = select(
+        func.count(Stream.id).label("total_play_count"),
+        func.coalesce(func.sum(Stream.duration_ms), 0).label("total_listening_ms"),
+        func.count(func.distinct(song_key)).label("unique_songs"),
+        func.count(func.distinct(artist_key)).label("unique_artists"),
+        func.count(func.distinct(func.date(Stream.played_at))).label("active_days"),
+    )
+
+    albums_stmt = select(Stream.album_name, Stream.artist_name).where(
+        Stream.album_name.is_not(None)
+    )
+
+    if start and end:
+        stmt = stmt.where(Stream.played_at.between(start, end))
+        albums_stmt = albums_stmt.where(Stream.played_at.between(start, end))
+
+    albums_subquery = albums_stmt.distinct().subquery()
+    albums_count_stmt = select(func.count()).select_from(albums_subquery)
+
+    t0 = time.perf_counter()
+    result = db.execute(stmt).one()
+    unique_albums = db.execute(albums_count_stmt).scalar_one()
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    logger.info(f"get_listening_stats query: {elapsed_ms:.1f}ms ({timeframe})")
+
+    total_play_count = int(result.total_play_count or 0)
+    total_listening_ms = int(result.total_listening_ms or 0)
+
+    return ListeningStats(
+        total_play_count=total_play_count,
+        total_listening_ms=total_listening_ms,
+        unique_songs=int(result.unique_songs or 0),
+        unique_artists=int(result.unique_artists or 0),
+        unique_albums=int(unique_albums or 0),
+        active_days=int(result.active_days or 0),
+        average_play_ms=round(total_listening_ms / total_play_count)
+        if total_play_count
+        else 0,
+    )
 
 
 def get_recently_played(

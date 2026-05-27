@@ -27,6 +27,16 @@ export interface AvailablePeriods {
   latest_date: string | null;
 }
 
+export interface ListeningStats {
+  total_play_count: number;
+  total_listening_ms: number;
+  unique_songs: number;
+  unique_artists: number;
+  unique_albums: number;
+  active_days: number;
+  average_play_ms: number;
+}
+
 export interface RecentlyPlayedItem {
   track_name: string;
   artist_name: string;

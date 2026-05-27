@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import time
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,8 +21,44 @@ from .schemas import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+async def local_playback_sync_loop() -> None:
+    """Run playback sync in-process for local/dev environments."""
+    from .tasks.sync_recent_tracks import fetch_and_store_recent_tracks
+
+    interval_seconds = max(5, settings.local_sync_interval_seconds)
+    logger.info("Starting local playback sync loop every %ss", interval_seconds)
+
+    while True:
+        try:
+            await fetch_and_store_recent_tracks(
+                max_wait_seconds=settings.sync_max_wait_seconds
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Local playback sync failed")
+
+        await asyncio.sleep(interval_seconds)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    sync_task = None
+    if settings.enable_local_sync:
+        sync_task = asyncio.create_task(local_playback_sync_loop())
+
+    yield
+
+    if sync_task:
+        sync_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await sync_task
+
+
 app = FastAPI(
     title="Spotify Analytics API",
+    lifespan=lifespan,
     responses={
         400: {"model": ErrorResponse},
         401: {"model": ErrorResponse},
@@ -100,7 +138,7 @@ async def cron_sync_tracks(authorization: str = Header(None)):
 
     try:
         logger.info("Starting cron sync...")
-        await fetch_and_store_recent_tracks()
+        await fetch_and_store_recent_tracks(max_wait_seconds=settings.sync_max_wait_seconds)
         logger.info("Cron sync completed successfully")
         return CronSyncResponse(status="success", message="Tracks synced successfully")
     except Exception as e:
@@ -113,7 +151,7 @@ async def cron_sync_tracks(authorization: str = Header(None)):
                     "message": "Failed to sync tracks.",
                 }
             },
-        )
+        ) from e
 
 
 @app.get("/", response_model=MessageResponse)

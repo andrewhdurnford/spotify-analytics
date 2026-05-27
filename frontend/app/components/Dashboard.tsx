@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import useSWR from 'swr';
 import TimelineSelector from '@/app/components/TimelineSelector';
 import CurrentlyPlaying from '@/app/components/CurrentlyPlaying';
+import ListeningStats from '@/app/components/ListeningStats';
 import MediaSection from '@/app/components/MediaSection';
 import RecentlyPlayedSection from '@/app/components/RecentlyPlayedSection';
 import { fetcher } from '@/app/lib/fetcher';
@@ -12,6 +13,7 @@ import type {
   Artist,
   Album,
   AvailablePeriods,
+  ListeningStats as ListeningStatsData,
   RecentlyPlayedItem,
   RecentlyPlayedResponse,
 } from '@/app/types';
@@ -20,6 +22,7 @@ interface DashboardProps {
   initialSongs: Song[];
   initialArtists: Artist[];
   initialAlbums: Album[];
+  initialStats: ListeningStatsData;
   initialRecentlyPlayed: RecentlyPlayedItem[];
   initialPeriods: AvailablePeriods;
   initialTimeframe: string;
@@ -30,6 +33,7 @@ export default function Dashboard({
   initialSongs,
   initialArtists,
   initialAlbums,
+  initialStats,
   initialRecentlyPlayed,
   initialPeriods,
   initialTimeframe,
@@ -69,6 +73,14 @@ export default function Dashboard({
   });
 
   const {
+    data: stats,
+    error: statsError,
+    isLoading: statsLoading,
+  } = useSWR<ListeningStatsData>(`/api/top/stats?${params}`, fetcher, {
+    fallbackData: initialStats,
+  });
+
+  const {
     data: recentlyPlayed,
     error: recentlyPlayedError,
     isLoading: recentlyPlayedLoading,
@@ -81,8 +93,8 @@ export default function Dashboard({
     },
   });
 
-  const loading = songsLoading || artistsLoading || albumsLoading || recentlyPlayedLoading;
-  const error = songsError || artistsError || albumsError || recentlyPlayedError;
+  const loading = songsLoading || artistsLoading || albumsLoading || statsLoading || recentlyPlayedLoading;
+  const error = songsError || artistsError || albumsError || statsError || recentlyPlayedError;
 
   const handleTimeframeChange = (timeframe: string, date: string | null) => {
     setCurrentTimeframe(timeframe);
@@ -119,6 +131,7 @@ export default function Dashboard({
         </div>
       ) : (
         <div className="space-y-6 sm:space-y-8">
+          <ListeningStats stats={stats} />
           <MediaSection title="Top Songs" items={songs ?? []} type="songs" timeframe={currentTimeframe} date={currentDate} />
           <MediaSection title="Top Albums" items={albums ?? []} type="albums" />
           <MediaSection title="Top Artists" items={artists ?? []} type="artists" timeframe={currentTimeframe} date={currentDate} />

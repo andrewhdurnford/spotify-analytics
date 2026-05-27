@@ -4,6 +4,7 @@ import type {
   Artist,
   Album,
   AvailablePeriods,
+  ListeningStats,
   RecentlyPlayedItem,
   RecentlyPlayedResponse,
 } from '@/app/types';
@@ -32,6 +33,15 @@ export default async function Home({
   let initialSongs: Song[] = [];
   let initialArtists: Artist[] = [];
   let initialAlbums: Album[] = [];
+  let initialStats: ListeningStats = {
+    total_play_count: 0,
+    total_listening_ms: 0,
+    unique_songs: 0,
+    unique_artists: 0,
+    unique_albums: 0,
+    active_days: 0,
+    average_play_ms: 0,
+  };
   let initialRecentlyPlayed: RecentlyPlayedItem[] = [];
   let initialPeriods: AvailablePeriods = { years: [], earliest_date: null, latest_date: null };
 
@@ -39,10 +49,11 @@ export default async function Home({
     const params = new URLSearchParams({ timeframe: initialTimeframe });
     if (initialDate) params.set('date', initialDate);
 
-    const [songsRes, artistsRes, albumsRes, recentlyPlayedRes, periodsRes] = await Promise.all([
+    const [songsRes, artistsRes, albumsRes, statsRes, recentlyPlayedRes, periodsRes] = await Promise.all([
       fetch(`${API_URL}/api/top/songs?${params}`),
       fetch(`${API_URL}/api/top/artists?${params}`),
       fetch(`${API_URL}/api/top/albums?${params}`),
+      fetch(`${API_URL}/api/top/stats?${params}`),
       fetch(`${API_URL}/api/top/recently-played?page=1&page_size=10`),
       fetch(`${API_URL}/api/top/available-periods`),
     ]);
@@ -50,6 +61,7 @@ export default async function Home({
     if (songsRes.ok) initialSongs = await songsRes.json();
     if (artistsRes.ok) initialArtists = await artistsRes.json();
     if (albumsRes.ok) initialAlbums = await albumsRes.json();
+    if (statsRes.ok) initialStats = await statsRes.json();
     if (recentlyPlayedRes.ok) {
       const payload: RecentlyPlayedResponse = await recentlyPlayedRes.json();
       initialRecentlyPlayed = payload.items;
@@ -67,6 +79,7 @@ export default async function Home({
         initialSongs={initialSongs}
         initialArtists={initialArtists}
         initialAlbums={initialAlbums}
+        initialStats={initialStats}
         initialRecentlyPlayed={initialRecentlyPlayed}
         initialPeriods={initialPeriods}
         initialTimeframe={initialTimeframe}

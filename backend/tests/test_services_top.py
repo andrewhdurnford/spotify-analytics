@@ -8,12 +8,12 @@ from app.models import Artist, Stream, Track
 from app.services.top import (
     get_available_periods,
     get_date_range,
+    get_listening_stats,
     get_recently_played,
     get_top_albums,
     get_top_artists,
     get_top_songs,
 )
-
 
 # ---------------------------------------------------------------------------
 # get_date_range
@@ -218,6 +218,42 @@ class TestGetTopAlbums:
         assert len(results) == 2
         assert results[0].album_name == "Album 1"
         assert results[0].play_count == 3
+
+
+class TestGetListeningStats:
+    def test_all_time(self, db: Session):
+        _seed_data(db)
+        result = get_listening_stats(db, "all", datetime(2025, 6, 1))
+
+        assert result.total_play_count == 4
+        assert result.total_listening_ms == 780_000
+        assert result.unique_songs == 2
+        assert result.unique_artists == 2
+        assert result.unique_albums == 2
+        assert result.active_days == 4
+        assert result.average_play_ms == 195_000
+
+    def test_month_filter(self, db: Session):
+        _seed_data(db)
+        result = get_listening_stats(db, "month", datetime(2025, 1, 15))
+
+        assert result.total_play_count == 3
+        assert result.total_listening_ms == 600_000
+        assert result.unique_songs == 1
+        assert result.unique_artists == 1
+        assert result.unique_albums == 1
+
+    def test_empty_timeframe(self, db: Session):
+        _seed_data(db)
+        result = get_listening_stats(db, "month", datetime(2025, 3, 15))
+
+        assert result.total_play_count == 0
+        assert result.total_listening_ms == 0
+        assert result.unique_songs == 0
+        assert result.unique_artists == 0
+        assert result.unique_albums == 0
+        assert result.active_days == 0
+        assert result.average_play_ms == 0
 
 
 class TestGetAvailablePeriods:

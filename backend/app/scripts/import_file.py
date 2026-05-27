@@ -48,6 +48,10 @@ def parse_spotify_date(date_string: str) -> datetime:
 
 
 def is_skipped_item(item: dict) -> bool:
+    reason_end = item.get("reason_end")
+    if reason_end and reason_end != "trackdone":
+        return True
+
     for k in ("skipped", "is_skipped", "skipped_flag", "skipped?"):
         if k not in item:
             continue

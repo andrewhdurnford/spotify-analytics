@@ -92,6 +92,31 @@ class TestAlbumsRoute:
         assert data[0]["album_name"] == "Alb 1"
 
 
+class TestStatsRoute:
+    def test_default_params(self, client, db):
+        _seed(db)
+        resp = client.get("/api/top/stats")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_play_count"] == 1
+        assert body["total_listening_ms"] == 200_000
+        assert body["unique_songs"] == 1
+        assert body["unique_artists"] == 1
+        assert body["unique_albums"] == 1
+        assert body["active_days"] == 1
+        assert body["average_play_ms"] == 200_000
+
+    def test_with_timeframe_and_date(self, client, db):
+        _seed(db)
+        resp = client.get("/api/top/stats?timeframe=month&date=2025-03-01")
+        assert resp.status_code == 200
+        assert resp.json()["total_play_count"] == 0
+
+    def test_invalid_date_returns_400(self, client):
+        resp = client.get("/api/top/stats?date=bad-date")
+        assert resp.status_code == 400
+
+
 class TestAvailablePeriodsRoute:
     def test_with_data(self, client, db):
         _seed(db)

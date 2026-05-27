@@ -1,13 +1,15 @@
+from datetime import datetime
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Literal
-from datetime import datetime
 
 from ...database import get_db
 from ...dependencies import get_spotify_client
 from ...schemas import (
     AvailablePeriods,
     CurrentlyPlaying,
+    ListeningStats,
     RecentlyPlayedResponse,
     TopAlbum,
     TopArtist,
@@ -67,6 +69,16 @@ def get_top_albums(
 ):
     base_date = _parse_date(date)
     return top_service.get_top_albums(db, timeframe, base_date, limit)
+
+
+@router.get("/stats", response_model=ListeningStats)
+def get_listening_stats(
+    timeframe: Literal["all", "year", "quarter", "month", "week", "day"] = "all",
+    date: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    base_date = _parse_date(date)
+    return top_service.get_listening_stats(db, timeframe, base_date)
 
 
 @router.get("/available-periods", response_model=AvailablePeriods)
