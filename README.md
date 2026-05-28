@@ -90,7 +90,7 @@ Use the deployed backend URL for both values in hosted frontend environments.
 
 - GitHub Actions workflow: `.github/workflows/ci.yml`
 - Triggered on pull requests and pushes to `main`
-- Runs backend checks (`ruff check .`, `pytest`) and frontend checks (`npm run lint`, `npm test -- --run`)
+- Runs backend checks (`ruff check .`, `pytest`) and frontend checks (`npm run lint`, `npm test -- --run`, `npm run build`)
 
 ## Troubleshooting External Postgres
 
