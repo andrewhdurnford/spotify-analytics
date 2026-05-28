@@ -157,7 +157,7 @@ def backfill_artists():
                 continue
 
         print(f"\n{'=' * 60}")
-        print(f"BACKFILL COMPLETE")
+        print("BACKFILL COMPLETE")
         print(f"{'=' * 60}")
         print(f"Artists added: {artists_added}")
         print(f"Artists failed: {artists_failed}")
@@ -166,7 +166,7 @@ def backfill_artists():
 
         # Show some stats
         print(f"\n{'=' * 60}")
-        print(f"DATABASE STATS")
+        print("DATABASE STATS")
         print(f"{'=' * 60}")
 
         print(f"Total artists: {total_artists}")
@@ -185,7 +185,7 @@ def backfill_artists():
             )
 
             if top_artists:
-                print(f"\nTop 10 most popular artists:")
+                print("\nTop 10 most popular artists:")
                 for idx, artist in enumerate(top_artists, 1):
                     genres_str = ", ".join(artist.genres[:2]) if artist.genres else "No genres"
                     print(
@@ -202,7 +202,7 @@ def backfill_artists():
                     genre_count[genre] = genre_count.get(genre, 0) + 1
 
             if genre_count:
-                print(f"\nTop 10 genres:")
+                print("\nTop 10 genres:")
                 sorted_genres = sorted(genre_count.items(), key=lambda x: x[1], reverse=True)[:10]
                 for idx, (genre, count) in enumerate(sorted_genres, 1):
                     print(f"  {idx}. {genre}: {count} artists")

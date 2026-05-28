@@ -3,6 +3,21 @@
 import { useMemo } from 'react';
 import Dropdown from '@/app/components/Dropdown';
 
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
 interface TimelineSelectorProps {
   onTimeframeChange: (timeframe: string, date: string | null) => void;
   availableYears: number[];
@@ -23,7 +38,6 @@ export default function TimelineSelector({
   className,
 }: TimelineSelectorProps) {
   const timeframe = selectedTimeframe as 'all' | 'year' | 'month';
-  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const timeframeOptions: Array<'all' | 'year' | 'month'> = ['all', 'year', 'month'];
 
   const parsedDate = useMemo(() => {
@@ -42,7 +56,7 @@ export default function TimelineSelector({
   const displayMonth = parsedDate.month;
 
   const filteredMonths = useMemo(() => {
-    if (!displayYear) return months;
+    if (!displayYear) return MONTHS;
 
     let startIndex = 0;
     let endIndex = 11;
@@ -59,8 +73,8 @@ export default function TimelineSelector({
       if (displayYear === latestYear) endIndex = latestMonth;
     }
 
-    return months.slice(startIndex, endIndex + 1);
-  }, [displayYear, earliestDate, latestDate, months]);
+    return MONTHS.slice(startIndex, endIndex + 1);
+  }, [displayYear, earliestDate, latestDate]);
 
   const formatDate = (year: number, month: number) => `${year}-${String(month + 1).padStart(2, '0')}-01`;
 
@@ -99,7 +113,7 @@ export default function TimelineSelector({
   };
 
   const handleMonthChange = (monthName: string) => {
-    const monthIndex = months.indexOf(monthName);
+    const monthIndex = MONTHS.indexOf(monthName);
     if (monthIndex === -1) return;
     const year = displayYear ?? (availableYears.length > 0 ? availableYears[availableYears.length - 1] : new Date().getFullYear());
     onTimeframeChange('month', formatDate(year, monthIndex));
@@ -138,7 +152,7 @@ export default function TimelineSelector({
             <label className="block text-sm font-light text-[#F4F4F9] mb-2">Month</label>
             <Dropdown
               options={filteredMonths}
-              selected={displayMonth !== null ? months[displayMonth] : filteredMonths[0]}
+              selected={displayMonth !== null ? MONTHS[displayMonth] : filteredMonths[0]}
               onSelect={handleMonthChange}
               label="Select month"
             />

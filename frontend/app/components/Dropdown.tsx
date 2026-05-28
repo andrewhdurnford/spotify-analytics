@@ -102,7 +102,6 @@ export default function Dropdown<T extends string | number>({
   }, [isOpen, activeIndex])
 
   const listboxId = `dropdown-listbox-${label ?? 'default'}`
-  const activeOptionId = activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined
 
   return (
     <div className="relative inline-block w-40" onKeyDown={handleKeyDown}>
@@ -112,7 +111,7 @@ export default function Dropdown<T extends string | number>({
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-label={label}
-        aria-activedescendant={isOpen ? activeOptionId : undefined}
+        aria-controls={isOpen ? listboxId : undefined}
         className="font-['lexend'] font-light text-[#F4F4F9] hover:text-white hover:underline hover:cursor-pointer transition-transform duration-250 hover:scale-105 min-h-[44px] flex items-center"
       >
         {getLabel(selected)}

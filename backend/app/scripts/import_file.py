@@ -60,7 +60,7 @@ def is_skipped_item(item: dict) -> bool:
             continue
         if isinstance(v, bool) and v:
             return True
-        if isinstance(v, (int, float)) and v != 0:
+        if isinstance(v, int | float) and v != 0:
             return True
         if isinstance(v, str) and v.strip().lower() in ("1", "true", "yes"):
             return True
@@ -96,10 +96,10 @@ def has_fuzzy_match(track_id: str, played_at: datetime, by_track_id: dict) -> bo
     times = by_track_id.get(track_id)
     if not times:
         return False
-    for t in times:
-        if abs((played_at - t).total_seconds()) <= FUZZY_WINDOW.total_seconds():
-            return True
-    return False
+    return any(
+        abs((played_at - t).total_seconds()) <= FUZZY_WINDOW.total_seconds()
+        for t in times
+    )
 
 
 def parse_records(data: list[dict]) -> tuple[list[dict], int]:
@@ -171,7 +171,7 @@ def import_file(file_path: str, commit: bool = False):
     print(f"Mode: {'COMMIT (will write to DB)' if commit else 'DRY RUN (preview only)'}")
     print()
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         data = json.load(f)
 
     if not isinstance(data, list):

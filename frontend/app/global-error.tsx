@@ -1,7 +1,6 @@
 'use client';
 
 export default function GlobalError({
-  error,
   reset,
 }: {
   error: Error & { digest?: string };
@@ -9,7 +8,7 @@ export default function GlobalError({
 }) {
   return (
     <html lang="en">
-      <body className="bg-[#001A23]">
+      <body className="bg-deep-blue">
         <main className="min-h-screen flex flex-col items-center justify-center text-[#F4F4F9] p-8">
           <h2 className="font-['lexend'] text-2xl font-normal mb-4">Something went wrong</h2>
           <p className="font-['lexend'] font-light text-[#A1A1A7] mb-6 text-center max-w-md">

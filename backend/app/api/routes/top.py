@@ -26,7 +26,7 @@ def _parse_date(date: str | None) -> datetime:
         return datetime.now()
     try:
         return datetime.fromisoformat(date)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
         raise HTTPException(
             status_code=400,
             detail={
@@ -35,7 +35,7 @@ def _parse_date(date: str | None) -> datetime:
                     "message": f"Invalid date format: '{date}'. Expected ISO 8601 format (e.g. 2025-01-01).",
                 }
             },
-        )
+        ) from exc
 
 
 @router.get("/songs", response_model=list[TopSong])

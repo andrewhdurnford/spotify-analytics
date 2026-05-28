@@ -1,7 +1,8 @@
-import os
 import base64
-import httpx
 import logging
+import os
+
+import httpx
 
 logger = logging.getLogger(__name__)
 

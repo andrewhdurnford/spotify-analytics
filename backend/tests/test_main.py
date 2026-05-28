@@ -41,31 +41,29 @@ class TestCronSyncTracks:
         from app.config import Settings
 
         # Reload settings to pick up the env override
-        with patch("app.main.settings", Settings(cron_secret="test-secret-123")):
-            with patch(
-                "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
-                new_callable=AsyncMock,
-            ) as mock_sync:
-                mock_sync.return_value = None
-                resp = client.post(
-                    "/api/cron/sync-tracks",
-                    headers={"Authorization": "Bearer test-secret-123"},
-                )
-                assert resp.status_code == 200
-                assert resp.json()["status"] == "success"
+        with patch("app.main.settings", Settings(cron_secret="test-secret-123")), patch(
+            "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
+            new_callable=AsyncMock,
+        ) as mock_sync:
+            mock_sync.return_value = None
+            resp = client.post(
+                "/api/cron/sync-tracks",
+                headers={"Authorization": "Bearer test-secret-123"},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "success"
 
     @patch.dict(os.environ, {"CRON_SECRET": "test-secret-123"})
     def test_returns_500_when_sync_fails(self, client):
         from app.config import Settings
 
-        with patch("app.main.settings", Settings(cron_secret="test-secret-123")):
-            with patch(
-                "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
-                new_callable=AsyncMock,
-            ) as mock_sync:
-                mock_sync.side_effect = Exception("boom")
-                resp = client.post(
-                    "/api/cron/sync-tracks",
-                    headers={"Authorization": "Bearer test-secret-123"},
-                )
-                assert resp.status_code == 500
+        with patch("app.main.settings", Settings(cron_secret="test-secret-123")), patch(
+            "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
+            new_callable=AsyncMock,
+        ) as mock_sync:
+            mock_sync.side_effect = Exception("boom")
+            resp = client.post(
+                "/api/cron/sync-tracks",
+                headers={"Authorization": "Bearer test-secret-123"},
+            )
+            assert resp.status_code == 500

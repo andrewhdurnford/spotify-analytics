@@ -4,6 +4,10 @@ Uses an in-memory SQLite database so tests run fast and don't need
 a real PostgreSQL instance.
 """
 
+import os
+
+os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test?sslmode=require")
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -12,7 +16,6 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-
 
 # In-memory SQLite for tests ------------------------------------------------
 engine = create_engine(

@@ -17,7 +17,7 @@ def _parse_date(date: str | None) -> datetime:
         return datetime.now()
     try:
         return datetime.fromisoformat(date)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
         raise HTTPException(
             status_code=400,
             detail={
@@ -29,7 +29,7 @@ def _parse_date(date: str | None) -> datetime:
                     ),
                 }
             },
-        )
+        ) from exc
 
 
 @router.get("/artists/{artist_id}", response_model=ArtistDetailResponse)

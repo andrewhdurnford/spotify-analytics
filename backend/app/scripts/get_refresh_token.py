@@ -1,8 +1,9 @@
-import os
-from dotenv import load_dotenv
 import base64
-import httpx
+import os
 from urllib.parse import urlencode
+
+import httpx
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -23,7 +24,7 @@ def get_auth_url():
 # Step 2: Exchange code for tokens
 def get_tokens(code):
     auth_header = base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode()
-    
+
     response = httpx.post(
         "https://accounts.spotify.com/api/token",
         data={
@@ -36,7 +37,7 @@ def get_tokens(code):
             "Content-Type": "application/x-www-form-urlencoded",
         },
     )
-    
+
     return response.json()
 
 if __name__ == "__main__":
@@ -44,11 +45,11 @@ if __name__ == "__main__":
     print(get_auth_url())
     print("\n2. After authorizing, you'll be redirected to 127.0.0.1:8888/callback?code=...")
     print("   Copy the 'code' parameter from the URL")
-    
+
     code = input("\n3. Paste the code here: ").strip()
-    
+
     tokens = get_tokens(code)
-    
+
     if "refresh_token" in tokens:
         print("\n✅ Success! Add this to your .env file:")
         print(f"SPOTIFY_REFRESH_TOKEN={tokens['refresh_token']}")

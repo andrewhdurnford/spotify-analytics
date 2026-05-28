@@ -54,12 +54,11 @@ def is_skipped_item(item: dict) -> bool:
         if isinstance(v, bool):
             if v:
                 return True
-        elif isinstance(v, (int, float)):
+        elif isinstance(v, int | float):
             if v != 0:
                 return True
-        elif isinstance(v, str):
-            if v.strip().lower() in ("1", "true", "yes"):
-                return True
+        elif isinstance(v, str) and v.strip().lower() in ("1", "true", "yes"):
+            return True
     return False
 
 
@@ -69,7 +68,7 @@ def import_spotify_file(file_path: str, db: Session):
     print(f"\nProcessing: {file_path}")
 
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             data = json.load(f)
 
         if not isinstance(data, list):
@@ -150,7 +149,7 @@ def import_spotify_file(file_path: str, db: Session):
                     if existing:
                         skipped += 1
                         continue
-                except Exception as query_error:
+                except Exception:
                     # If query fails due to invalid transaction, rollback and skip
                     db.rollback()
                     skipped += 1
@@ -365,7 +364,7 @@ def import_all_spotify_data(data_dir: str = "/data"):
             total_imported += imported
 
         print(f"\n{'=' * 60}")
-        print(f"IMPORT COMPLETE")
+        print("IMPORT COMPLETE")
         print(f"{'=' * 60}")
         print(f"Total records imported: {total_imported}")
 
@@ -446,7 +445,7 @@ def import_all_spotify_data(data_dir: str = "/data"):
             unique_tracks = db.scalar(select(func.count(Stream.track_name.distinct())))
             unique_artists = db.scalar(select(func.count(Stream.artist_name.distinct())))
 
-            print(f"\nDatabase Stats:")
+            print("\nDatabase Stats:")
             print(f"  Date range: {earliest.played_at} to {latest.played_at}")
             print(f"  Unique tracks: {unique_tracks}")
             print(f"  Unique artists: {unique_artists}")
@@ -480,5 +479,5 @@ def import_all_spotify_data(data_dir: str = "/data"):
 
 if __name__ == "__main__":
     print("Starting Spotify data import...")
-    print(f"Looking for JSON files in /data")
+    print("Looking for JSON files in /data")
     import_all_spotify_data()
