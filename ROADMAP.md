@@ -13,8 +13,8 @@ and product insights with tests around the moving parts.
 - Backend port: `8000`; frontend port: `3000`.
 - Historical Spotify exports live under `data/` and are not committed.
 - Delivery stability work is present on `origin/main`; current ingest work has
-  started by extracting historical import parsing and duplicate classification
-  into a tested service module.
+  extracted historical import parsing, duplicate classification, and Spotify
+  metadata enrichment into tested service modules.
 
 ## Verified Checks
 
@@ -31,7 +31,7 @@ cd frontend && npm run build
 Results:
 
 - Backend Ruff: passing.
-- Backend pytest: 83 tests passing.
+- Backend pytest: 89 tests passing.
 - Frontend lint: passing with no warnings after cleanup.
 - Frontend Vitest: 29 tests passing.
 - Frontend build: passing.
@@ -109,7 +109,7 @@ Results:
 | --- | --- | --- | --- |
 | P1-1 | Consolidate date/timeframe parsing | Done | Top and detail routes now use shared API parameter helpers. |
 | P1-2 | Detail service test coverage | Done for current scope | Added focused service tests for `app/services/detail.py` query edge cases. |
-| P1-3 | Refactor ingest/sync script internals | Started | Historical import parsing and duplicate classification now live in `app/services/ingest.py`; next split Spotify enrichment and sync persistence. |
+| P1-3 | Refactor ingest/sync script internals | Started | Historical import parsing and Spotify metadata enrichment now live in service modules; next split sync persistence. |
 | P1-4 | Structured sync/import error handling | Not started | Add clearer error categories and log fields for API, rate limit, and DB failures. |
 | P1-5 | Backend format strategy | Not started | Decide whether CI should include `ruff format --check`; current code passes lint but not full format check. |
 
@@ -130,7 +130,7 @@ Results:
 3. Decide whether to add `ruff format --check .` to CI or leave formatting as a
    manual maintenance command.
 4. Continue refactoring ingestion/import code behind tests before changing data
-   semantics; next extract Spotify enrichment and sync persistence.
+   semantics; next extract sync persistence.
 5. Add structured sync/import error categories and log fields.
 6. Decide the timeframe UX/API contract.
 7. Add richer history and insight surfaces once the ingestion path is easier to
