@@ -1,7 +1,6 @@
 import json
 import os
 import sys
-from datetime import datetime
 
 import httpx
 from dotenv import load_dotenv
@@ -12,54 +11,16 @@ sys.path.append("/app")
 
 from app.database import SessionLocal, engine
 from app.models import Artist, Base, Stream, Track
+from app.services.ingest import (
+    classify_new_records,
+    load_existing_streams,
+    parse_streaming_records,
+    stream_from_record,
+)
 from app.utils.spotify import fetch_spotify_token_from_client_credentials
 
 # load .env from project root
 load_dotenv()
-
-
-def parse_spotify_date(date_string):
-    """Parse Spotify's date format"""
-    # Try common formats
-    formats = [
-        "%Y-%m-%d %H:%M",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S.%fZ",
-    ]
-
-    for fmt in formats:
-        try:
-            return datetime.strptime(date_string, fmt)
-        except ValueError:
-            continue
-
-    raise ValueError(f"Unable to parse date: {date_string}")
-
-
-# --- added helper to detect skipped records ---
-def is_skipped_item(item: dict) -> bool:
-    """Return True if the JSON record indicates the track was not completed."""
-    reason_end = item.get("reason_end")
-    if reason_end and reason_end != "trackdone":
-        return True
-
-    keys_to_check = ("skipped", "is_skipped", "skipped_flag", "skipped?")
-    for k in keys_to_check:
-        if k not in item:
-            continue
-        v = item.get(k)
-        if v is None:
-            continue
-        if isinstance(v, bool):
-            if v:
-                return True
-        elif isinstance(v, int | float):
-            if v != 0:
-                return True
-        elif isinstance(v, str) and v.strip().lower() in ("1", "true", "yes"):
-            return True
-    return False
 
 
 def import_spotify_file(file_path: str, db: Session):
@@ -78,95 +39,17 @@ def import_spotify_file(file_path: str, db: Session):
         print(f"  Found {len(data)} records")
 
         imported = 0
-        skipped = 0
+        records, skipped = parse_streaming_records(data)
 
-        for item in data:
-            try:
-                # Skip records that indicate the track was skipped
-                if is_skipped_item(item):
-                    skipped += 1
-                    continue
+        if records:
+            date_min = min(record.played_at for record in records)
+            date_max = max(record.played_at for record in records)
+            existing_streams = load_existing_streams(db, date_min, date_max)
+            classified = classify_new_records(records, existing_streams, fuzzy=False)
+            skipped += classified.dup_exact + classified.dup_name
 
-                # ... (your existing parsing code) ...
-
-                timestamp = item.get("ts") or item.get("endTime") or item.get("timestamp")
-
-                if not timestamp:
-                    skipped += 1
-                    continue
-
-                played_at = parse_spotify_date(timestamp)
-
-                track_name = (
-                    item.get("master_metadata_track_name")
-                    or item.get("trackName")
-                    or item.get("track_name")
-                    or "Unknown"
-                )
-
-                artist_name = (
-                    item.get("master_metadata_album_artist_name")
-                    or item.get("artistName")
-                    or item.get("artist_name")
-                    or "Unknown"
-                )
-
-                album_name = (
-                    item.get("master_metadata_album_album_name")
-                    or item.get("albumName")
-                    or item.get("album_name")
-                )
-
-                duration_ms = (
-                    item.get("ms_played") or item.get("msPlayed") or item.get("duration_ms") or 0
-                )
-
-                track_uri = item.get("spotify_track_uri", "")
-                track_id = track_uri.replace("spotify:track:", "") if track_uri else ""
-
-                artist_uri = item.get("spotify_artist_uri", "")
-                artist_id = artist_uri.replace("spotify:artist:", "") if artist_uri else ""
-
-                # --- DUPLICATE CHECK ---
-                try:
-                    existing = None
-                    if track_id:
-                        existing = db.execute(
-                            select(Stream).where(
-                                Stream.track_id == track_id,
-                                Stream.played_at == played_at,
-                            )
-                        ).scalar_one_or_none()
-                    else:
-                        existing = db.execute(
-                            select(Stream).where(
-                                Stream.track_name == track_name,
-                                Stream.artist_name == artist_name,
-                                Stream.played_at == played_at,
-                            )
-                        ).scalar_one_or_none()
-
-                    if existing:
-                        skipped += 1
-                        continue
-                except Exception:
-                    # If query fails due to invalid transaction, rollback and skip
-                    db.rollback()
-                    skipped += 1
-                    continue
-                # --- END DUPLICATE CHECK ---
-
-                stream = Stream(
-                    track_name=track_name,
-                    artist_name=artist_name,
-                    album_name=album_name,
-                    played_at=played_at,
-                    duration_ms=duration_ms,
-                    track_id=track_id,
-                    artist_id=artist_id,
-                )
-
-                db.add(stream)
+            for record in classified.to_add:
+                db.add(stream_from_record(record))
 
                 # Commit each record individually to avoid batch failures
                 try:
@@ -178,13 +61,6 @@ def import_spotify_file(file_path: str, db: Session):
                     if skipped <= 5:
                         print(f"  Error committing record: {commit_error}")
                     continue
-
-            except Exception as e:
-                db.rollback()  # Add rollback here too
-                skipped += 1
-                if skipped <= 5:
-                    print(f"  Error importing record: {e}")
-                continue
 
         print(f"  ✓ Imported {imported} records ({skipped} skipped)")
         return imported

@@ -12,9 +12,9 @@ and product insights with tests around the moving parts.
 - Preferred local stack: `docker compose up --build` from the repo root.
 - Backend port: `8000`; frontend port: `3000`.
 - Historical Spotify exports live under `data/` and are not committed.
-- Delivery stability work is present on `origin/main`; the current local changes
-  cover roadmap/docs cleanup, detail service tests, and shared route parameter
-  parsing until committed.
+- Delivery stability work is present on `origin/main`; current ingest work has
+  started by extracting historical import parsing and duplicate classification
+  into a tested service module.
 
 ## Verified Checks
 
@@ -31,7 +31,7 @@ cd frontend && npm run build
 Results:
 
 - Backend Ruff: passing.
-- Backend pytest: 73 tests passing.
+- Backend pytest: 83 tests passing.
 - Frontend lint: passing with no warnings after cleanup.
 - Frontend Vitest: 29 tests passing.
 - Frontend build: passing.
@@ -109,7 +109,7 @@ Results:
 | --- | --- | --- | --- |
 | P1-1 | Consolidate date/timeframe parsing | Done | Top and detail routes now use shared API parameter helpers. |
 | P1-2 | Detail service test coverage | Done for current scope | Added focused service tests for `app/services/detail.py` query edge cases. |
-| P1-3 | Refactor ingest/sync script internals | Not started | Split parsing, dedupe, enrichment, and persistence into reusable modules. |
+| P1-3 | Refactor ingest/sync script internals | Started | Historical import parsing and duplicate classification now live in `app/services/ingest.py`; next split Spotify enrichment and sync persistence. |
 | P1-4 | Structured sync/import error handling | Not started | Add clearer error categories and log fields for API, rate limit, and DB failures. |
 | P1-5 | Backend format strategy | Not started | Decide whether CI should include `ruff format --check`; current code passes lint but not full format check. |
 
@@ -129,7 +129,8 @@ Results:
 2. Confirm the latest remote GitHub Actions run is green on `main` or a PR.
 3. Decide whether to add `ruff format --check .` to CI or leave formatting as a
    manual maintenance command.
-4. Refactor ingestion/import code behind tests before changing data semantics.
+4. Continue refactoring ingestion/import code behind tests before changing data
+   semantics; next extract Spotify enrichment and sync persistence.
 5. Add structured sync/import error categories and log fields.
 6. Decide the timeframe UX/API contract.
 7. Add richer history and insight surfaces once the ingestion path is easier to
