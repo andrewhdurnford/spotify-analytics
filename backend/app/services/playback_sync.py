@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Artist, Stream, Track
+from app.services.ingest_errors import IssueReporter, spotify_api_issue
 
 DUPLICATE_GRACE = timedelta(seconds=30)
 
@@ -30,6 +31,7 @@ async def store_completed_play(
     played_at: datetime | None = None,
     fetch_artist_details: ArtistDetailsFetcher,
     warn: Warn | None = None,
+    report_issue: IssueReporter | None = None,
 ) -> StoreCompletedPlayResult:
     """Persist a completed current-playback observation."""
     played_at = played_at or datetime.now(UTC).replace(tzinfo=None)
@@ -48,6 +50,7 @@ async def store_completed_play(
         track,
         fetch_artist_details=fetch_artist_details,
         warn=warn,
+        report_issue=report_issue,
     )
     db.add(_stream_from_playback(track, played_at))
     db.commit()
@@ -114,6 +117,7 @@ async def _ensure_artists(
     *,
     fetch_artist_details: ArtistDetailsFetcher,
     warn: Warn | None,
+    report_issue: IssueReporter | None,
 ) -> int:
     new_artists = 0
     for artist_data in track.get("artists") or []:
@@ -126,8 +130,16 @@ async def _ensure_artists(
         try:
             artist_full = await fetch_artist_details(artist_data["id"])
         except Exception as exc:
+            issue = spotify_api_issue(
+                operation="playback_artist_metadata",
+                message=f"Error fetching artist {artist_data['id']}: {exc}",
+                exc=exc,
+                identifiers=[artist_data["id"]],
+            )
+            if report_issue:
+                report_issue(issue)
             if warn:
-                warn(f"Error fetching artist {artist_data['id']}: {exc}")
+                warn(issue.message)
             continue
 
         if not artist_full:

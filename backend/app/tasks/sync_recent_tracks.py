@@ -5,6 +5,7 @@ import httpx
 
 from ..database import SessionLocal
 from ..dependencies import get_spotify_client
+from ..services.ingest_errors import IngestIssue
 from ..services.playback_sync import store_completed_play
 
 logger = logging.getLogger(__name__)
@@ -12,6 +13,10 @@ logger = logging.getLogger(__name__)
 COMPLETION_RATIO = 0.98
 COMPLETION_GRACE_MS = 5_000
 _sync_lock = asyncio.Lock()
+
+
+def _log_ingest_issue(issue: IngestIssue) -> None:
+    logger.warning(issue.message, extra=issue.log_extra())
 
 
 def _is_complete_enough(progress_ms: int | None, duration_ms: int | None) -> bool:
@@ -163,7 +168,7 @@ async def _fetch_and_store_recent_tracks(max_wait_seconds: int) -> None:
                 track,
                 progress_ms=progress_ms,
                 fetch_artist_details=fetch_artist_details,
-                warn=logger.warning,
+                report_issue=_log_ingest_issue,
             )
 
             if result.duplicate:

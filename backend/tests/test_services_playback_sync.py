@@ -141,6 +141,7 @@ async def test_store_completed_play_reuses_existing_track_and_artist(db, playbac
 @pytest.mark.asyncio
 async def test_store_completed_play_continues_when_artist_fetch_fails(db, playback_track):
     warnings = []
+    issues = []
 
     async def failing_fetcher(artist_id: str):
         raise RuntimeError("artist API failed")
@@ -152,12 +153,16 @@ async def test_store_completed_play_continues_when_artist_fetch_fails(db, playba
         played_at=datetime(2025, 1, 1, 12, 0, 0),
         fetch_artist_details=failing_fetcher,
         warn=warnings.append,
+        report_issue=issues.append,
     )
 
     assert result.stored is True
     assert result.new_tracks == 1
     assert result.new_artists == 0
     assert warnings == ["Error fetching artist artist-1: artist API failed"]
+    assert len(issues) == 1
+    assert issues[0].operation == "playback_artist_metadata"
+    assert issues[0].identifiers == ("artist-1",)
     assert len(db.execute(select(Stream)).scalars().all()) == 1
     assert db.execute(select(Artist)).scalars().all() == []
 

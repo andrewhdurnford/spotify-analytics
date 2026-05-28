@@ -6,6 +6,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import Artist, Stream, Track
+from app.services.ingest_errors import IssueReporter, spotify_api_issue
 
 BATCH_SIZE = 50
 SPOTIFY_ARTISTS_URL = "https://api.spotify.com/v1/artists"
@@ -87,6 +88,7 @@ def upsert_tracks_from_spotify(
     *,
     http_get: HttpGet = httpx.get,
     warn: Warn | None = None,
+    report_issue: IssueReporter | None = None,
 ) -> int:
     """Fetch track metadata in Spotify batches and insert/update tracks."""
     if not track_ids:
@@ -119,8 +121,16 @@ def upsert_tracks_from_spotify(
 
             db.commit()
         except Exception as exc:
+            issue = spotify_api_issue(
+                operation="spotify_track_metadata",
+                message=f"spotify track batch fetch failed: {exc}",
+                exc=exc,
+                identifiers=batch,
+            )
+            if report_issue:
+                report_issue(issue)
             if warn:
-                warn(f"spotify track batch fetch failed: {exc}")
+                warn(issue.message)
             db.rollback()
             continue
 
@@ -134,6 +144,7 @@ def upsert_artists_from_spotify(
     *,
     http_get: HttpGet = httpx.get,
     warn: Warn | None = None,
+    report_issue: IssueReporter | None = None,
 ) -> int:
     """Fetch artist metadata in Spotify batches and insert/update artists."""
     if not artist_ids:
@@ -166,8 +177,16 @@ def upsert_artists_from_spotify(
 
             db.commit()
         except Exception as exc:
+            issue = spotify_api_issue(
+                operation="spotify_artist_metadata",
+                message=f"spotify artist batch fetch failed: {exc}",
+                exc=exc,
+                identifiers=batch,
+            )
+            if report_issue:
+                report_issue(issue)
             if warn:
-                warn(f"spotify artist batch fetch failed: {exc}")
+                warn(issue.message)
             db.rollback()
             continue
 

@@ -15,7 +15,8 @@ and product insights with tests around the moving parts.
 - Delivery stability work is present on `origin/main`; current ingest work has
   extracted historical import parsing, duplicate classification, Spotify
   metadata enrichment, and current-playback sync persistence into tested service
-  modules.
+  modules. Structured ingest issue reporting has started for Spotify API and
+  playback artist metadata failures.
 
 ## Verified Checks
 
@@ -32,7 +33,7 @@ cd frontend && npm run build
 Results:
 
 - Backend Ruff: passing.
-- Backend pytest: 94 tests passing.
+- Backend pytest: 97 tests passing.
 - Frontend lint: passing with no warnings after cleanup.
 - Frontend Vitest: 29 tests passing.
 - Frontend build: passing.
@@ -73,8 +74,9 @@ Results:
 - Existing DB rows still do not store `skipped` or `reason_end`; historical
   correction requires reimporting or export reconciliation.
 - Import/sync internals now have tested service modules for parsing, dedupe,
-  enrichment, and current-playback persistence. Error classification and logging
-  are the next maintainability target.
+  enrichment, and current-playback persistence.
+- Spotify metadata and playback artist fetch failures now produce structured
+  ingest issues with category, code, operation, identifiers, and status fields.
 
 ### CI and Tooling
 
@@ -112,7 +114,7 @@ Results:
 | P1-1 | Consolidate date/timeframe parsing | Done | Top and detail routes now use shared API parameter helpers. |
 | P1-2 | Detail service test coverage | Done for current scope | Added focused service tests for `app/services/detail.py` query edge cases. |
 | P1-3 | Refactor ingest/sync script internals | Done for current scope | Historical import parsing, duplicate classification, Spotify metadata enrichment, and sync persistence now live in service modules. |
-| P1-4 | Structured sync/import error handling | Not started | Add clearer error categories and log fields for API, rate limit, and DB failures. |
+| P1-4 | Structured sync/import error handling | Started | Added structured Spotify API/rate-limit issue classification for metadata and playback artist fetch failures; next add DB failure categories. |
 | P1-5 | Backend format strategy | Not started | Decide whether CI should include `ruff format --check`; current code passes lint but not full format check. |
 
 ### P2 - Product Expansion
@@ -127,7 +129,7 @@ Results:
 ## Recommended Next Sequence
 
 1. Confirm the latest remote GitHub Actions run is green on `main` or a PR.
-2. Add structured sync/import error categories and log fields.
+2. Continue structured sync/import error categories with DB failure handling.
 3. Decide whether to add `ruff format --check .` to CI or leave formatting as a
    manual maintenance command.
 4. Decide the timeframe UX/API contract.

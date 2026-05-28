@@ -215,6 +215,7 @@ def test_upsert_artists_inserts_and_updates_metadata(db):
 
 def test_upsert_batch_failure_rolls_back_and_reports_warning(db):
     warnings = []
+    issues = []
 
     def fake_get(url, *, params, headers, timeout):
         return FakeResponse(error=RuntimeError("boom"))
@@ -225,8 +226,12 @@ def test_upsert_batch_failure_rolls_back_and_reports_warning(db):
         ["track-1"],
         http_get=fake_get,
         warn=warnings.append,
+        report_issue=issues.append,
     )
 
     assert upserted == 0
     assert warnings == ["spotify track batch fetch failed: boom"]
+    assert len(issues) == 1
+    assert issues[0].operation == "spotify_track_metadata"
+    assert issues[0].identifiers == ("track-1",)
     assert db.execute(select(Track)).scalars().all() == []

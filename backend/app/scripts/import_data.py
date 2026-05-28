@@ -16,6 +16,7 @@ from app.services.ingest import (
     parse_streaming_records,
     stream_from_record,
 )
+from app.services.ingest_errors import IngestIssue
 from app.services.spotify_metadata import (
     get_missing_artist_ids,
     get_missing_track_ids,
@@ -27,6 +28,10 @@ from app.utils.spotify import fetch_spotify_token_from_client_credentials
 
 # load .env from project root
 load_dotenv()
+
+
+def print_ingest_issue(issue: IngestIssue) -> None:
+    print(f"  Warning [{issue.category.value}/{issue.code}]: {issue.message}")
 
 
 def import_spotify_file(file_path: str, db: Session):
@@ -118,7 +123,7 @@ def import_all_spotify_data(data_dir: str = "/data"):
                 db,
                 spotify_token,
                 to_fetch,
-                warn=lambda message: print(f"  Warning: {message}"),
+                report_issue=print_ingest_issue,
             )
             print(f"  Upserted/updated {upserted} tracks")
 
@@ -128,7 +133,7 @@ def import_all_spotify_data(data_dir: str = "/data"):
                 db,
                 spotify_token,
                 to_fetch_artists,
-                warn=lambda message: print(f"  Warning: {message}"),
+                report_issue=print_ingest_issue,
             )
             print(f"  Upserted/updated {artists_upserted} artists")
         else:
@@ -166,7 +171,7 @@ def import_all_spotify_data(data_dir: str = "/data"):
                     db,
                     spotify_token,
                     track_ids_to_fetch,
-                    warn=lambda message: print(f"  Warning: {message}"),
+                    report_issue=print_ingest_issue,
                 )
                 print(f"Backfilled artist IDs from {len(track_ids_to_fetch)} tracks")
 
