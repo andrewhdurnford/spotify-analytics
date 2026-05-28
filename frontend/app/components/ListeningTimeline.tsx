@@ -16,6 +16,18 @@ interface ListeningTimelineProps {
   granularity: string;
 }
 
+const chartTheme = {
+  axis: 'var(--color-chart-axis)',
+  background: 'var(--color-deep-blue)',
+  foreground: 'var(--color-foreground)',
+  grid: 'var(--color-chart-grid)',
+  muted: 'var(--color-muted)',
+  spotify: 'var(--color-spotify)',
+  fontFamily: 'var(--font-lexend)',
+  tickFontSize: 'var(--text-chart-tick)',
+  tooltipFontSize: 'var(--text-chart-tooltip)',
+};
+
 function formatMonth(period: string): string {
   const [year, mo] = period.split('-');
   const date = new Date(Number(year), Number(mo) - 1);
@@ -34,7 +46,7 @@ function formatPeriod(period: string, granularity: string): string {
 export default function ListeningTimeline({ data, granularity }: ListeningTimelineProps) {
   if (data.length === 0) {
     return (
-      <div className="font-['lexend'] font-light text-[#A1A1A7] text-sm">
+      <div className="font-lexend font-light text-muted text-sm">
         No listening history available.
       </div>
     );
@@ -44,30 +56,38 @@ export default function ListeningTimeline({ data, granularity }: ListeningTimeli
     <div className="w-full h-64 sm:h-80">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+          <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
           <XAxis
             dataKey="period"
             tickFormatter={(val) => formatPeriod(String(val), granularity)}
-            tick={{ fill: '#A1A1A7', fontSize: 12, fontFamily: 'lexend' }}
-            axisLine={{ stroke: 'rgba(255,255,255,0.12)' }}
+            tick={{
+              fill: chartTheme.muted,
+              fontSize: chartTheme.tickFontSize,
+              fontFamily: chartTheme.fontFamily,
+            }}
+            axisLine={{ stroke: chartTheme.axis }}
             tickLine={false}
             interval="preserveStartEnd"
             minTickGap={40}
           />
           <YAxis
-            tick={{ fill: '#A1A1A7', fontSize: 12, fontFamily: 'lexend' }}
-            axisLine={{ stroke: 'rgba(255,255,255,0.12)' }}
+            tick={{
+              fill: chartTheme.muted,
+              fontSize: chartTheme.tickFontSize,
+              fontFamily: chartTheme.fontFamily,
+            }}
+            axisLine={{ stroke: chartTheme.axis }}
             tickLine={false}
             allowDecimals={false}
           />
           <Tooltip
             contentStyle={{
-              backgroundColor: '#001A23',
-              border: '1px solid rgba(255,255,255,0.12)',
+              backgroundColor: chartTheme.background,
+              border: `1px solid ${chartTheme.axis}`,
               borderRadius: '8px',
-              fontFamily: 'lexend',
-              fontSize: '13px',
-              color: '#F4F4F9',
+              fontFamily: chartTheme.fontFamily,
+              fontSize: chartTheme.tooltipFontSize,
+              color: chartTheme.foreground,
             }}
             labelFormatter={(label) => formatPeriod(String(label), granularity)}
             formatter={(value) => [String(value), 'Plays']}
@@ -75,10 +95,10 @@ export default function ListeningTimeline({ data, granularity }: ListeningTimeli
           <Line
             type="monotone"
             dataKey="play_count"
-            stroke="#1DB954"
+            stroke={chartTheme.spotify}
             strokeWidth={2}
             dot={false}
-            activeDot={{ r: 4, fill: '#1DB954' }}
+            activeDot={{ r: 4, fill: chartTheme.spotify }}
           />
         </LineChart>
       </ResponsiveContainer>

@@ -105,7 +105,7 @@ export default function Dashboard({
     <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 mt-6 sm:mt-12 gap-4">
         <div className="flex-1 min-w-0">
-          <h1 className="font-['tinos'] text-3xl sm:text-4xl md:text-5xl font-normal mb-6 sm:mb-8">Spotify Stats</h1>
+          <h1 className="font-tinos text-3xl sm:text-4xl md:text-5xl font-normal mb-6 sm:mb-8">Spotify Stats</h1>
           <TimelineSelector
             onTimeframeChange={handleTimeframeChange}
             availableYears={initialPeriods.years}
@@ -121,13 +121,13 @@ export default function Dashboard({
 
       {error ? (
         <div className="text-center py-12">
-          <div className="font-['lexend'] font-light text-red-400 text-lg mb-4">
+          <div className="font-lexend font-light text-danger text-lg mb-4">
             Failed to load data. Please try again later.
           </div>
         </div>
       ) : loading ? (
         <div className="text-center py-12">
-          <div className="text-lg sm:text-xl font-['lexend'] font-light">Loading...</div>
+          <div className="text-lg sm:text-xl font-lexend font-light">Loading...</div>
         </div>
       ) : (
         <div className="space-y-6 sm:space-y-8">

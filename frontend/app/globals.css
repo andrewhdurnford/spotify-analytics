@@ -3,6 +3,37 @@
 
 @theme {
   --color-deep-blue: #001A23;
+  --color-foreground: #F4F4F9;
+  --color-bright: #FFFFFF;
+  --color-muted: #A1A1A7;
+  --color-soft: #D1D1D7;
+  --color-spotify: #1DB954;
+  --color-danger: #F87171;
+  --color-menu: #1A1A1A;
+  --color-menu-border: #333333;
+  --color-menu-active: #2A2A2A;
+  --color-surface: rgb(255 255 255 / 0.02);
+  --color-surface-hover: rgb(255 255 255 / 0.04);
+  --color-subtle: rgb(255 255 255 / 0.10);
+  --color-stroke: rgb(255 255 255 / 0.20);
+  --color-stroke-strong: rgb(255 255 255 / 0.40);
+  --color-chart-grid: rgb(255 255 255 / 0.08);
+  --color-chart-axis: rgb(255 255 255 / 0.12);
+  --font-lexend: lexend, sans-serif;
+  --font-tinos: Tinos, serif;
+  --text-micro: 0.625rem;
+  --text-chart-tick: 0.75rem;
+  --text-chart-tooltip: 0.8125rem;
+  --spacing-touch: 2.75rem;
+  --spacing-progress: 5rem;
+}
+
+@utility grid-cols-recent-play {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+@utility grid-cols-stat-summary {
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, auto));
 }
 
 @media (prefers-color-scheme: dark) {
@@ -16,7 +47,7 @@
 html {
   @apply bg-deep-blue;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.12) transparent;
+  scrollbar-color: var(--color-chart-axis) transparent;
   overflow-x: hidden;
 }
 
@@ -40,14 +71,14 @@ html::-webkit-scrollbar-track {
 }
 
 html::-webkit-scrollbar-thumb {
-  background-color: rgba(255,255,255,0.12);
+  background-color: var(--color-chart-axis);
   border-radius: 999px;
   border: 3px solid transparent;
   background-clip: padding-box;
 }
 
 html::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255,255,255,0.22);
+  background-color: var(--color-stroke);
 }
 
 @font-face {

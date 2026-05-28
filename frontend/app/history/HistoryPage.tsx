@@ -43,14 +43,14 @@ export default function HistoryPage({ initialData }: HistoryPageProps) {
       <Breadcrumb items={[{ label: 'Home', href: '/' }, { label: 'History' }]} />
 
       <div className="mb-6 sm:mb-8">
-        <h1 className="font-['tinos'] text-3xl sm:text-4xl md:text-5xl font-normal mb-4">Full Listening History</h1>
-        <p className="font-['lexend'] font-light text-sm sm:text-base text-[#A1A1A7] mb-4">
+        <h1 className="font-tinos text-3xl sm:text-4xl md:text-5xl font-normal mb-4">Full Listening History</h1>
+        <p className="font-lexend font-light text-sm sm:text-base text-muted mb-4">
           Showing 100 plays per page in reverse chronological order.
         </p>
 
-        <div className="flex flex-col sm:flex-row sm:items-end gap-4 font-['lexend']">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-4 font-lexend">
           <div>
-            <label htmlFor="start-date" className="block text-sm font-light text-[#F4F4F9] mb-2">
+            <label htmlFor="start-date" className="block text-sm font-light text-foreground mb-2">
               Start from date
             </label>
             <input
@@ -58,7 +58,7 @@ export default function HistoryPage({ initialData }: HistoryPageProps) {
               type="date"
               value={startDate}
               onChange={(e) => handleStartDateChange(e.target.value)}
-              className="bg-transparent border border-white/20 rounded-md px-3 py-2 text-sm text-[#F4F4F9] focus:outline-none focus:border-white/40"
+              className="bg-transparent border border-stroke rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-stroke-strong"
             />
           </div>
         </div>
@@ -66,7 +66,7 @@ export default function HistoryPage({ initialData }: HistoryPageProps) {
 
       {error ? (
         <div className="text-center py-12">
-          <div className="font-['lexend'] font-light text-red-400 text-lg">
+          <div className="font-lexend font-light text-danger text-lg">
             Failed to load history. Please try again.
           </div>
         </div>
@@ -74,23 +74,23 @@ export default function HistoryPage({ initialData }: HistoryPageProps) {
         <>
           <RecentlyPlayedSection title="History" items={history.items} />
 
-          <div className="mt-6 flex items-center justify-between gap-4 font-['lexend']">
+          <div className="mt-6 flex items-center justify-between gap-4 font-lexend">
             <button
               type="button"
               onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
               disabled={page === 1 || isLoading}
-              className="text-sm border border-white/20 rounded-full px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed hover:border-white/40 hover:bg-white/[0.04] transition-colors"
+              className="text-sm border border-stroke rounded-full px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed hover:border-stroke-strong hover:bg-surface-hover transition-colors"
             >
               Previous
             </button>
 
-            <div className="font-light text-sm text-[#A1A1A7]">Page {page}</div>
+            <div className="font-light text-sm text-muted">Page {page}</div>
 
             <button
               type="button"
               onClick={() => setPage((prev) => prev + 1)}
               disabled={!history.has_next || isLoading}
-              className="text-sm border border-white/20 rounded-full px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed hover:border-white/40 hover:bg-white/[0.04] transition-colors"
+              className="text-sm border border-stroke rounded-full px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed hover:border-stroke-strong hover:bg-surface-hover transition-colors"
             >
               Next
             </button>

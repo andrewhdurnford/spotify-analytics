@@ -38,8 +38,8 @@ export default function MediaSection({ title, items, type, timeframe, date }: Me
   if (items.length === 0) {
     return (
       <div>
-        <h2 className="font-['lexend'] text-2xl font-normal mb-4">{title}</h2>
-        <p className="font-['lexend'] font-light text-[#D1D1D7]">
+        <h2 className="font-lexend text-2xl font-normal mb-4">{title}</h2>
+        <p className="font-lexend font-light text-soft">
           No data available for this period
         </p>
       </div>
@@ -78,7 +78,7 @@ export default function MediaSection({ title, items, type, timeframe, date }: Me
 
   return (
     <div>
-      <h2 className="font-['lexend'] text-xl sm:text-2xl font-normal mb-4">{title}</h2>
+      <h2 className="font-lexend text-xl sm:text-2xl font-normal mb-4">{title}</h2>
       <div className="flex gap-3 overflow-x-auto pb-3 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8 no-scrollbar-bg">
         {items.map((item, idx) => (
           <MediaCard

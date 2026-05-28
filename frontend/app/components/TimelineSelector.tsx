@@ -123,9 +123,9 @@ export default function TimelineSelector({
 
   return (
     <div className={className ?? "mb-6 sm:mb-8"}>
-      <div className="flex items-start sm:items-center gap-4 sm:gap-6 flex-wrap font-['lexend']">
+      <div className="flex items-start sm:items-center gap-4 sm:gap-6 flex-wrap font-lexend">
         <div>
-          <label className="block text-sm font-light text-[#F4F4F9] mb-2">View By</label>
+          <label className="block text-sm font-light text-foreground mb-2">View By</label>
           <Dropdown
             options={timeframeOptions}
             selected={timeframe}
@@ -137,7 +137,7 @@ export default function TimelineSelector({
 
         {timeframe !== 'all' && availableYears.length > 0 && (
           <div>
-            <label className="block text-sm font-light text-[#F4F4F9] mb-2">Year</label>
+            <label className="block text-sm font-light text-foreground mb-2">Year</label>
             <Dropdown
               options={availableYears}
               selected={displayYear ?? availableYears[availableYears.length - 1]}
@@ -149,7 +149,7 @@ export default function TimelineSelector({
 
         {timeframe === 'month' && (
           <div>
-            <label className="block text-sm font-light text-[#F4F4F9] mb-2">Month</label>
+            <label className="block text-sm font-light text-foreground mb-2">Month</label>
             <Dropdown
               options={filteredMonths}
               selected={displayMonth !== null ? MONTHS[displayMonth] : filteredMonths[0]}

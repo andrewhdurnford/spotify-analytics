@@ -79,14 +79,14 @@ export default function SongPage({ songId, isNameFallback, initialData, initialP
           />
         )}
         <div className="flex flex-col justify-center">
-          <h1 className="font-['tinos'] text-3xl sm:text-4xl md:text-5xl font-normal mb-3">
+          <h1 className="font-tinos text-3xl sm:text-4xl md:text-5xl font-normal mb-3">
             {track.name}
           </h1>
-          <div className="font-['lexend'] font-light text-base text-[#A1A1A7] mb-1">
+          <div className="font-lexend font-light text-base text-muted mb-1">
             {track.artist_id ? (
               <Link
                 href={`/artists/${track.artist_id}`}
-                className="hover:text-[#F4F4F9] transition-colors"
+                className="hover:text-foreground transition-colors"
               >
                 {track.artist_name}
               </Link>
@@ -95,16 +95,16 @@ export default function SongPage({ songId, isNameFallback, initialData, initialP
             )}
           </div>
           {track.album_name && (
-            <div className="font-['lexend'] font-light text-sm text-[#A1A1A7] mb-2">
+            <div className="font-lexend font-light text-sm text-muted mb-2">
               {track.album_name}
             </div>
           )}
           {track.duration_ms && (
-            <div className="font-['lexend'] font-light text-sm text-[#A1A1A7] mb-2">
+            <div className="font-lexend font-light text-sm text-muted mb-2">
               {formatDuration(track.duration_ms)}
             </div>
           )}
-          <div className="font-['lexend'] font-light text-lg text-[#F4F4F9]">
+          <div className="font-lexend font-light text-lg text-foreground">
             {track.total_play_count.toLocaleString()} plays
           </div>
         </div>
@@ -121,18 +121,18 @@ export default function SongPage({ songId, isNameFallback, initialData, initialP
 
       {error ? (
         <div className="text-center py-12">
-          <div className="font-['lexend'] font-light text-red-400 text-lg">
+          <div className="font-lexend font-light text-danger text-lg">
             Failed to load data. Please try again later.
           </div>
         </div>
       ) : isLoading ? (
         <div className="text-center py-12">
-          <div className="text-lg sm:text-xl font-['lexend'] font-light">Loading...</div>
+          <div className="text-lg sm:text-xl font-lexend font-light">Loading...</div>
         </div>
       ) : (
         <div className="space-y-6 sm:space-y-8">
           <div>
-            <h2 className="font-['lexend'] text-xl sm:text-2xl font-normal mb-4">
+            <h2 className="font-lexend text-xl sm:text-2xl font-normal mb-4">
               Listening Over Time
             </h2>
             <ListeningTimeline data={timeline} granularity={granularity} />

@@ -67,7 +67,7 @@ export default function ArtistPage({ artistId, initialData, initialPeriods, init
           />
         )}
         <div className="flex flex-col justify-center">
-          <h1 className="font-['tinos'] text-3xl sm:text-4xl md:text-5xl font-normal mb-3">
+          <h1 className="font-tinos text-3xl sm:text-4xl md:text-5xl font-normal mb-3">
             {artist.name}
           </h1>
           {artist.genres.length > 0 && (
@@ -75,7 +75,7 @@ export default function ArtistPage({ artistId, initialData, initialPeriods, init
               {artist.genres.map((genre) => (
                 <span
                   key={genre}
-                  className="font-['lexend'] font-light text-xs px-3 py-1 rounded-full border border-white/20 text-[#A1A1A7]"
+                  className="font-lexend font-light text-xs px-3 py-1 rounded-full border border-stroke text-muted"
                 >
                   {genre}
                 </span>
@@ -83,11 +83,11 @@ export default function ArtistPage({ artistId, initialData, initialPeriods, init
             </div>
           )}
           {artist.popularity !== null && (
-            <div className="font-['lexend'] font-light text-sm text-[#A1A1A7] mb-2">
+            <div className="font-lexend font-light text-sm text-muted mb-2">
               Popularity: {artist.popularity}/100
             </div>
           )}
-          <div className="font-['lexend'] font-light text-lg text-[#F4F4F9]">
+          <div className="font-lexend font-light text-lg text-foreground">
             {artist.total_play_count.toLocaleString()} plays
           </div>
         </div>
@@ -104,19 +104,19 @@ export default function ArtistPage({ artistId, initialData, initialPeriods, init
 
       {error ? (
         <div className="text-center py-12">
-          <div className="font-['lexend'] font-light text-red-400 text-lg">
+          <div className="font-lexend font-light text-danger text-lg">
             Failed to load data. Please try again later.
           </div>
         </div>
       ) : isLoading ? (
         <div className="text-center py-12">
-          <div className="text-lg sm:text-xl font-['lexend'] font-light">Loading...</div>
+          <div className="text-lg sm:text-xl font-lexend font-light">Loading...</div>
         </div>
       ) : (
         <div className="space-y-6 sm:space-y-8">
           {/* Listening timeline */}
           <div>
-            <h2 className="font-['lexend'] text-xl sm:text-2xl font-normal mb-4">
+            <h2 className="font-lexend text-xl sm:text-2xl font-normal mb-4">
               Listening Over Time
             </h2>
             <ListeningTimeline data={timeline} granularity={granularity} />

@@ -29,7 +29,7 @@ export default function MediaCard({ name, subtitle, imageSrc, href }: MediaCardP
         </div>
       </div>
 
-      <div className="text-[#A1A1A7] text-xs mt-2 whitespace-normal wrap-break-word">
+      <div className="text-muted text-xs mt-2 whitespace-normal wrap-break-word">
         {subtitle}
       </div>
     </div>
@@ -39,7 +39,7 @@ export default function MediaCard({ name, subtitle, imageSrc, href }: MediaCardP
     return (
       <Link
         href={href}
-        className="rounded-lg font-['lexend'] font-light w-32 sm:w-40 shrink-0 hover:opacity-80 transition-opacity"
+        className="rounded-lg font-lexend font-light w-32 sm:w-40 shrink-0 hover:opacity-80 transition-opacity"
       >
         {content}
       </Link>
@@ -47,7 +47,7 @@ export default function MediaCard({ name, subtitle, imageSrc, href }: MediaCardP
   }
 
   return (
-    <div className="rounded-lg font-['lexend'] font-light w-32 sm:w-40 shrink-0">
+    <div className="rounded-lg font-lexend font-light w-32 sm:w-40 shrink-0">
       {content}
     </div>
   );

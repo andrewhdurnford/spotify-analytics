@@ -60,16 +60,16 @@ export default async function SongDetailPage({ params, searchParams }: PageProps
 
   if (!initialData) {
     return (
-      <main className="min-h-screen p-4 sm:p-6 md:p-8 max-w-7xl mx-auto text-[#F4F4F9]">
+      <main className="min-h-screen p-4 sm:p-6 md:p-8 max-w-7xl mx-auto text-foreground">
         <div className="text-center py-12">
-          <div className="font-['lexend'] font-light text-lg">Song not found.</div>
+          <div className="font-lexend font-light text-lg">Song not found.</div>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen p-4 sm:p-6 md:p-8 max-w-7xl mx-auto text-[#F4F4F9]">
+    <main className="min-h-screen p-4 sm:p-6 md:p-8 max-w-7xl mx-auto text-foreground">
       <SongPage
         songId={id}
         isNameFallback={isNameFallback}

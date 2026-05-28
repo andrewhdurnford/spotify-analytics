@@ -112,7 +112,7 @@ export default function Dropdown<T extends string | number>({
         aria-expanded={isOpen}
         aria-label={label}
         aria-controls={isOpen ? listboxId : undefined}
-        className="font-['lexend'] font-light text-[#F4F4F9] hover:text-white hover:underline hover:cursor-pointer transition-transform duration-250 hover:scale-105 min-h-[44px] flex items-center"
+        className="font-lexend font-light text-foreground hover:text-bright hover:underline hover:cursor-pointer transition-transform duration-250 hover:scale-105 min-h-touch flex items-center"
       >
         {getLabel(selected)}
       </button>
@@ -124,7 +124,7 @@ export default function Dropdown<T extends string | number>({
           id={listboxId}
           aria-label={label}
           tabIndex={-1}
-          className="absolute right-0 mt-1 w-40 bg-[#1a1a1a] border border-[#333] rounded-lg shadow-lg z-20"
+          className="absolute right-0 mt-1 w-40 bg-menu border border-menu-border rounded-lg shadow-lg z-20"
         >
           {options.map((value, idx) => (
             <li
@@ -133,12 +133,12 @@ export default function Dropdown<T extends string | number>({
               role="option"
               aria-selected={value === selected}
               onClick={() => selectOption(value)}
-              className={`px-3 py-2 min-h-[44px] flex items-center font-['lexend'] font-light text-[#F4F4F9] transition-transform duration-250 
-                ${idx === activeIndex ? 'bg-[#2a2a2a]' : ''}
+              className={`px-3 py-2 min-h-touch flex items-center font-lexend font-light text-foreground transition-transform duration-250 
+                ${idx === activeIndex ? 'bg-menu-active' : ''}
                 ${
                 value === selected 
                   ? 'font-normal' 
-                  : 'hover:scale-105 hover:cursor-pointer hover:underline hover:text-white active:bg-[#2a2a2a]'
+                  : 'hover:scale-105 hover:cursor-pointer hover:underline hover:text-bright active:bg-menu-active'
               }`}
             >
               {getLabel(value)}

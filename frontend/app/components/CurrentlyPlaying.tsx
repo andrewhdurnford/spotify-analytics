@@ -105,26 +105,26 @@ export default function CurrentlyPlaying({
           className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto hover:opacity-80 transition-opacity"
         >
           <div className="flex-1 sm:flex-none sm:text-right h-16 sm:h-20 flex flex-col justify-between">
-            <div className="text-xs text-[#1DB954] font-['lexend']">
+            <div className="text-xs text-spotify font-lexend">
               NOW PLAYING
             </div>
-            <div className="font-['lexend'] font-normal text-sm sm:text-lg truncate">
+            <div className="font-lexend font-normal text-sm sm:text-lg truncate">
               {currentlyPlaying.track_name}
             </div>
-            <div className="font-['lexend'] font-light text-xs sm:text-sm text-[#A1A1A7] truncate">
+            <div className="font-lexend font-light text-xs sm:text-sm text-muted truncate">
               {currentlyPlaying.artist_name}
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-['lexend'] text-[#A1A1A7] tabular-nums">
+              <span className="text-micro font-lexend text-muted tabular-nums">
                 {formatTime(progressMs)}
               </span>
-              <div className="flex-1 h-1 rounded-full bg-white/10 min-w-[80px]">
+              <div className="flex-1 h-1 rounded-full bg-subtle min-w-progress">
                 <div
-                  className="h-full rounded-full bg-[#1DB954] transition-[width] duration-1000 linear"
+                  className="h-full rounded-full bg-spotify transition-all duration-1000 linear"
                   style={{ width: `${Math.min(percentage, 100)}%` }}
                 />
               </div>
-              <span className="text-[10px] font-['lexend'] text-[#A1A1A7] tabular-nums">
+              <span className="text-micro font-lexend text-muted tabular-nums">
                 {formatTime(duration)}
               </span>
             </div>

@@ -32,8 +32,8 @@ export default function ListeningStats({ stats }: ListeningStatsProps) {
   if (!stats || stats.total_play_count === 0) {
     return (
       <section>
-        <h2 className="font-['lexend'] text-xl sm:text-2xl font-normal mb-4">Period Stats</h2>
-        <p className="font-['lexend'] font-light text-[#D1D1D7]">
+        <h2 className="font-lexend text-xl sm:text-2xl font-normal mb-4">Period Stats</h2>
+        <p className="font-lexend font-light text-soft">
           No listening stats available for this period
         </p>
       </section>
@@ -52,17 +52,17 @@ export default function ListeningStats({ stats }: ListeningStatsProps) {
 
   return (
     <section>
-      <h2 className="font-['lexend'] text-xl sm:text-2xl font-normal mb-4">Period Stats</h2>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(8.5rem,auto))] gap-x-7 gap-y-3 justify-start font-['lexend']">
+      <h2 className="font-lexend text-xl sm:text-2xl font-normal mb-4">Period Stats</h2>
+      <div className="grid grid-cols-stat-summary gap-x-7 gap-y-3 justify-start font-lexend">
         {statItems.map((item) => (
           <div
             key={item.label}
             className="flex items-baseline gap-2"
           >
-            <span className="text-xl sm:text-2xl font-normal text-[#F4F4F9]">
+            <span className="text-xl sm:text-2xl font-normal text-foreground">
               {item.value}
             </span>
-            <span className="font-light text-xs sm:text-sm text-[#A1A1A7] whitespace-nowrap">
+            <span className="font-light text-xs sm:text-sm text-muted whitespace-nowrap">
               {item.label}
             </span>
           </div>
