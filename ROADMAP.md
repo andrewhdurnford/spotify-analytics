@@ -13,8 +13,9 @@ and product insights with tests around the moving parts.
 - Backend port: `8000`; frontend port: `3000`.
 - Historical Spotify exports live under `data/` and are not committed.
 - Delivery stability work is present on `origin/main`; current ingest work has
-  extracted historical import parsing, duplicate classification, and Spotify
-  metadata enrichment into tested service modules.
+  extracted historical import parsing, duplicate classification, Spotify
+  metadata enrichment, and current-playback sync persistence into tested service
+  modules.
 
 ## Verified Checks
 
@@ -31,7 +32,7 @@ cd frontend && npm run build
 Results:
 
 - Backend Ruff: passing.
-- Backend pytest: 89 tests passing.
+- Backend pytest: 94 tests passing.
 - Frontend lint: passing with no warnings after cleanup.
 - Frontend Vitest: 29 tests passing.
 - Frontend build: passing.
@@ -71,8 +72,9 @@ Results:
 - Duplicate handling is covered by sync tests.
 - Existing DB rows still do not store `skipped` or `reason_end`; historical
   correction requires reimporting or export reconciliation.
-- Import/sync code exists, but the internals are still script-heavy and are the
-  main area to refactor before adding more ingestion features.
+- Import/sync internals now have tested service modules for parsing, dedupe,
+  enrichment, and current-playback persistence. Error classification and logging
+  are the next maintainability target.
 
 ### CI and Tooling
 
@@ -109,7 +111,7 @@ Results:
 | --- | --- | --- | --- |
 | P1-1 | Consolidate date/timeframe parsing | Done | Top and detail routes now use shared API parameter helpers. |
 | P1-2 | Detail service test coverage | Done for current scope | Added focused service tests for `app/services/detail.py` query edge cases. |
-| P1-3 | Refactor ingest/sync script internals | Started | Historical import parsing and Spotify metadata enrichment now live in service modules; next split sync persistence. |
+| P1-3 | Refactor ingest/sync script internals | Done for current scope | Historical import parsing, duplicate classification, Spotify metadata enrichment, and sync persistence now live in service modules. |
 | P1-4 | Structured sync/import error handling | Not started | Add clearer error categories and log fields for API, rate limit, and DB failures. |
 | P1-5 | Backend format strategy | Not started | Decide whether CI should include `ruff format --check`; current code passes lint but not full format check. |
 
@@ -124,16 +126,12 @@ Results:
 
 ## Recommended Next Sequence
 
-1. Commit and push the current roadmap/docs, detail service test, and route
-   parameter helper changes.
-2. Confirm the latest remote GitHub Actions run is green on `main` or a PR.
+1. Confirm the latest remote GitHub Actions run is green on `main` or a PR.
+2. Add structured sync/import error categories and log fields.
 3. Decide whether to add `ruff format --check .` to CI or leave formatting as a
    manual maintenance command.
-4. Continue refactoring ingestion/import code behind tests before changing data
-   semantics; next extract sync persistence.
-5. Add structured sync/import error categories and log fields.
-6. Decide the timeframe UX/API contract.
-7. Add richer history and insight surfaces once the ingestion path is easier to
+4. Decide the timeframe UX/API contract.
+5. Add richer history and insight surfaces once the ingestion path is easier to
    change safely.
 
 ## Known Risks And Open Questions
