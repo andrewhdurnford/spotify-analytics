@@ -1,4 +1,5 @@
-import type { ArtistDetailResponse, AvailablePeriods } from '@/app/types';
+import type { ArtistDetailResponse } from '@/app/types';
+import { snapToAvailablePeriod } from '@/app/lib/timeframe';
 import ArtistPage from './ArtistPage';
 
 export const dynamic = 'force-dynamic';
@@ -10,6 +11,18 @@ function getCurrentMonthStart() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
+async function fetchArtist(
+  id: string,
+  timeframe: string,
+  date: string | null,
+): Promise<ArtistDetailResponse | null> {
+  const params = new URLSearchParams({ timeframe });
+  if (date) params.set('date', date);
+  const res = await fetch(`${API_URL}/api/artists/${id}?${params}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
 interface PageProps {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ timeframe?: string; date?: string }>;
@@ -19,24 +32,29 @@ export default async function ArtistDetailPage({ params, searchParams }: PagePro
   const { id } = await params;
   const query = await searchParams;
 
-  // Use timeframe from URL search params if provided, otherwise default to current month
-  const initialTimeframe = query.timeframe || 'month';
-  const initialDate = initialTimeframe === 'all' ? null : (query.date || getCurrentMonthStart());
+  const requestedTimeframe = query.timeframe || 'month';
+  const requestedDate = requestedTimeframe === 'all' ? null : (query.date || getCurrentMonthStart());
 
   let initialData: ArtistDetailResponse | null = null;
-  let initialPeriods: AvailablePeriods = { years: [], earliest_date: null, latest_date: null };
+  let initialTimeframe = requestedTimeframe;
+  let initialDate = requestedDate;
 
   try {
-    const detailParams = new URLSearchParams({ timeframe: initialTimeframe });
-    if (initialDate) detailParams.set('date', initialDate);
-
-    const [detailRes, periodsRes] = await Promise.all([
-      fetch(`${API_URL}/api/artists/${id}?${detailParams}`),
-      fetch(`${API_URL}/api/top/available-periods`),
-    ]);
-
-    if (detailRes.ok) initialData = await detailRes.json();
-    if (periodsRes.ok) initialPeriods = await periodsRes.json();
+    initialData = await fetchArtist(id, requestedTimeframe, requestedDate);
+    if (initialData) {
+      const snapped = snapToAvailablePeriod(
+        { timeframe: requestedTimeframe, date: requestedDate },
+        initialData.available_periods,
+      );
+      if (snapped.timeframe !== requestedTimeframe || snapped.date !== requestedDate) {
+        const refetched = await fetchArtist(id, snapped.timeframe, snapped.date);
+        if (refetched) {
+          initialData = refetched;
+          initialTimeframe = snapped.timeframe;
+          initialDate = snapped.date;
+        }
+      }
+    }
   } catch (err) {
     console.error('Failed to fetch artist detail:', err);
   }
@@ -56,7 +74,6 @@ export default async function ArtistDetailPage({ params, searchParams }: PagePro
       <ArtistPage
         artistId={id}
         initialData={initialData}
-        initialPeriods={initialPeriods}
         initialTimeframe={initialTimeframe}
         initialDate={initialDate}
       />

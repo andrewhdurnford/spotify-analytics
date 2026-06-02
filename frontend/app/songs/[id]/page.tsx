@@ -1,4 +1,5 @@
-import type { TrackDetailResponse, AvailablePeriods } from '@/app/types';
+import type { TrackDetailResponse } from '@/app/types';
+import { snapToAvailablePeriod } from '@/app/lib/timeframe';
 import SongPage from './SongPage';
 
 export const dynamic = 'force-dynamic';
@@ -10,6 +11,28 @@ function getCurrentMonthStart() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
+async function fetchTrack(
+  id: string,
+  isNameFallback: boolean,
+  timeframe: string,
+  date: string | null,
+): Promise<TrackDetailResponse | null> {
+  let url: string;
+  if (isNameFallback) {
+    const [trackName, artistName] = decodeURIComponent(id).split('--');
+    const params = new URLSearchParams({ track_name: trackName, artist_name: artistName, timeframe });
+    if (date) params.set('date', date);
+    url = `${API_URL}/api/tracks/by-name?${params}`;
+  } else {
+    const params = new URLSearchParams({ timeframe });
+    if (date) params.set('date', date);
+    url = `${API_URL}/api/tracks/${id}?${params}`;
+  }
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  return res.json();
+}
+
 interface PageProps {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ timeframe?: string; date?: string }>;
@@ -19,41 +42,32 @@ export default async function SongDetailPage({ params, searchParams }: PageProps
   const { id } = await params;
   const query = await searchParams;
 
-  // Use timeframe from URL search params if provided, otherwise default to current month
-  const initialTimeframe = query.timeframe || 'month';
-  const initialDate = initialTimeframe === 'all' ? null : (query.date || getCurrentMonthStart());
+  const requestedTimeframe = query.timeframe || 'month';
+  const requestedDate = requestedTimeframe === 'all' ? null : (query.date || getCurrentMonthStart());
 
-  let initialData: TrackDetailResponse | null = null;
-  let initialPeriods: AvailablePeriods = { years: [], earliest_date: null, latest_date: null };
-
-  // Determine if this is a Spotify track ID or an encoded name fallback
   // Encoded name format: trackName--artistName (URL encoded)
   const isNameFallback = id.includes('--');
 
+  let initialData: TrackDetailResponse | null = null;
+  let initialTimeframe = requestedTimeframe;
+  let initialDate = requestedDate;
+
   try {
-    let detailUrl: string;
-    if (isNameFallback) {
-      const [trackName, artistName] = decodeURIComponent(id).split('--');
-      const nameParams = new URLSearchParams({
-        track_name: trackName,
-        artist_name: artistName,
-        timeframe: initialTimeframe,
-      });
-      if (initialDate) nameParams.set('date', initialDate);
-      detailUrl = `${API_URL}/api/tracks/by-name?${nameParams}`;
-    } else {
-      const detailParams = new URLSearchParams({ timeframe: initialTimeframe });
-      if (initialDate) detailParams.set('date', initialDate);
-      detailUrl = `${API_URL}/api/tracks/${id}?${detailParams}`;
+    initialData = await fetchTrack(id, isNameFallback, requestedTimeframe, requestedDate);
+    if (initialData) {
+      const snapped = snapToAvailablePeriod(
+        { timeframe: requestedTimeframe, date: requestedDate },
+        initialData.available_periods,
+      );
+      if (snapped.timeframe !== requestedTimeframe || snapped.date !== requestedDate) {
+        const refetched = await fetchTrack(id, isNameFallback, snapped.timeframe, snapped.date);
+        if (refetched) {
+          initialData = refetched;
+          initialTimeframe = snapped.timeframe;
+          initialDate = snapped.date;
+        }
+      }
     }
-
-    const [detailRes, periodsRes] = await Promise.all([
-      fetch(detailUrl),
-      fetch(`${API_URL}/api/top/available-periods`),
-    ]);
-
-    if (detailRes.ok) initialData = await detailRes.json();
-    if (periodsRes.ok) initialPeriods = await periodsRes.json();
   } catch (err) {
     console.error('Failed to fetch track detail:', err);
   }
@@ -74,7 +88,6 @@ export default async function SongDetailPage({ params, searchParams }: PageProps
         songId={id}
         isNameFallback={isNameFallback}
         initialData={initialData}
-        initialPeriods={initialPeriods}
         initialTimeframe={initialTimeframe}
         initialDate={initialDate}
       />

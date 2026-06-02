@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import Image from 'next/image';
 import Breadcrumb from '@/app/components/Breadcrumb';
@@ -8,28 +9,29 @@ import TimelineSelector from '@/app/components/TimelineSelector';
 import ListeningTimeline from '@/app/components/ListeningTimeline';
 import MediaSection from '@/app/components/MediaSection';
 import { fetcher } from '@/app/lib/fetcher';
-import type { ArtistDetailResponse, AvailablePeriods } from '@/app/types';
+import { pluralize, timeframeQuery } from '@/app/lib/timeframe';
+import type { ArtistDetailResponse } from '@/app/types';
 
 interface ArtistPageProps {
   artistId: string;
   initialData: ArtistDetailResponse;
-  initialPeriods: AvailablePeriods;
   initialTimeframe: string;
   initialDate: string | null;
 }
 
-export default function ArtistPage({ artistId, initialData, initialPeriods, initialTimeframe, initialDate }: ArtistPageProps) {
+export default function ArtistPage({ artistId, initialData, initialTimeframe, initialDate }: ArtistPageProps) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [currentTimeframe, setCurrentTimeframe] = useState(initialTimeframe);
   const [currentDate, setCurrentDate] = useState<string | null>(initialDate);
 
-  const params = useMemo(() => {
-    const p = new URLSearchParams({ timeframe: currentTimeframe });
-    if (currentDate) p.set('date', currentDate);
-    return p.toString();
-  }, [currentTimeframe, currentDate]);
+  const query = useMemo(
+    () => timeframeQuery(currentTimeframe, currentDate),
+    [currentTimeframe, currentDate],
+  );
 
   const { data, error, isLoading } = useSWR<ArtistDetailResponse>(
-    `/api/artists/${artistId}?${params}`,
+    `/api/artists/${artistId}?${query}`,
     fetcher,
     { fallbackData: initialData },
   );
@@ -37,19 +39,17 @@ export default function ArtistPage({ artistId, initialData, initialPeriods, init
   const handleTimeframeChange = (timeframe: string, date: string | null) => {
     setCurrentTimeframe(timeframe);
     setCurrentDate(date);
+    router.replace(`${pathname}?${timeframeQuery(timeframe, date)}`, { scroll: false });
   };
 
-  const homeHref = useMemo(() => {
-    const p = new URLSearchParams({ timeframe: currentTimeframe });
-    if (currentDate) p.set('date', currentDate);
-    return `/?${p.toString()}`;
-  }, [currentTimeframe, currentDate]);
+  const homeHref = useMemo(() => `/?${query}`, [query]);
 
   const artist = data?.artist ?? initialData.artist;
   const topSongs = data?.top_songs ?? [];
   const topAlbums = data?.top_albums ?? [];
   const timeline = data?.timeline ?? initialData.timeline;
   const granularity = data?.granularity ?? initialData.granularity;
+  const periods = data?.available_periods ?? initialData.available_periods;
 
   return (
     <>
@@ -88,16 +88,16 @@ export default function ArtistPage({ artistId, initialData, initialPeriods, init
             </div>
           )}
           <div className="font-lexend font-light text-lg text-foreground">
-            {artist.total_play_count.toLocaleString()} plays
+            {artist.total_play_count.toLocaleString()} {pluralize(artist.total_play_count, 'play')}
           </div>
         </div>
       </div>
 
       <TimelineSelector
         onTimeframeChange={handleTimeframeChange}
-        availableYears={initialPeriods.years}
-        earliestDate={initialPeriods.earliest_date}
-        latestDate={initialPeriods.latest_date}
+        availableYears={periods.years}
+        earliestDate={periods.earliest_date}
+        latestDate={periods.latest_date}
         selectedTimeframe={currentTimeframe}
         selectedDate={currentDate}
       />
@@ -123,7 +123,7 @@ export default function ArtistPage({ artistId, initialData, initialPeriods, init
           </div>
 
           <MediaSection title="Top Songs" items={topSongs} type="songs" timeframe={currentTimeframe} date={currentDate} />
-          <MediaSection title="Top Albums" items={topAlbums} type="albums" />
+          <MediaSection title="Top Albums" items={topAlbums} type="albums" timeframe={currentTimeframe} date={currentDate} />
         </div>
       )}
     </>
