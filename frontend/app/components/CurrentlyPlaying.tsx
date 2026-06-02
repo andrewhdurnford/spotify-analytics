@@ -30,26 +30,31 @@ function formatTime(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+function buildQuery(timeframe?: string, date?: string | null): string {
+  if (!timeframe) return '';
+  const params = new URLSearchParams({ timeframe });
+  if (date) params.set('date', date);
+  return `?${params.toString()}`;
+}
+
 function buildSongHref(
   data: CurrentlyPlayingData,
-  timeframe?: string,
-  date?: string | null,
+  query: string,
 ): string {
-  let id: string;
-  if (data.track_id) {
-    id = data.track_id;
-  } else {
-    id = encodeURIComponent(`${data.track_name}--${data.artist_name}`);
-  }
-
-  let query = '';
-  if (timeframe) {
-    const params = new URLSearchParams({ timeframe });
-    if (date) params.set('date', date);
-    query = `?${params.toString()}`;
-  }
-
+  const id = data.track_id
+    ? data.track_id
+    : encodeURIComponent(`${data.track_name}--${data.artist_name}`);
   return `/songs/${id}${query}`;
+}
+
+function buildArtistHref(data: CurrentlyPlayingData, query: string): string | null {
+  if (!data.artist_id) return null;
+  return `/artists/${data.artist_id}${query}`;
+}
+
+function buildAlbumHref(data: CurrentlyPlayingData, query: string): string | null {
+  if (!data.artist_id || !data.album_name) return null;
+  return `/albums/${encodeURIComponent(`${data.artist_id}--${data.album_name}`)}${query}`;
 }
 
 export default function CurrentlyPlaying({
@@ -71,7 +76,6 @@ export default function CurrentlyPlaying({
   const [progressMs, setProgressMs] = useState(0);
   const lastSyncRef = useRef<number>(Date.now());
 
-  // Sync local progress when API data arrives
   useEffect(() => {
     if (currentlyPlaying?.progress_ms != null) {
       setProgressMs(currentlyPlaying.progress_ms);
@@ -79,67 +83,86 @@ export default function CurrentlyPlaying({
     }
   }, [currentlyPlaying?.progress_ms, currentlyPlaying?.track_name]);
 
-  // Interpolate progress client-side between API polls
   useEffect(() => {
     if (!currentlyPlaying?.is_playing || currentlyPlaying.duration_ms == null) {
       return;
     }
-
     const duration = currentlyPlaying.duration_ms;
-
     const interval = setInterval(() => {
       setProgressMs((prev) => Math.min(prev + 1000, duration));
     }, 1000);
-
     return () => clearInterval(interval);
   }, [currentlyPlaying?.is_playing, currentlyPlaying?.duration_ms, currentlyPlaying?.track_name]);
 
-  const duration = currentlyPlaying?.duration_ms ?? 0;
+  if (!currentlyPlaying?.is_playing) {
+    return <div className="flex items-center" />;
+  }
+
+  const query = buildQuery(timeframe, date);
+  const songHref = buildSongHref(currentlyPlaying, query);
+  const artistHref = buildArtistHref(currentlyPlaying, query);
+  const albumHref = buildAlbumHref(currentlyPlaying, query);
+  const imageHref = albumHref ?? songHref;
+
+  const duration = currentlyPlaying.duration_ms ?? 0;
   const percentage = duration > 0 ? (progressMs / duration) * 100 : 0;
 
   return (
     <div className="flex items-center">
-      {currentlyPlaying?.is_playing && (
-        <Link
-          href={buildSongHref(currentlyPlaying, timeframe, date)}
-          className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto hover:opacity-80 transition-opacity"
-        >
-          <div className="flex-1 sm:flex-none sm:text-right h-16 sm:h-20 flex flex-col justify-between">
-            <div className="text-xs text-spotify font-lexend">
-              NOW PLAYING
-            </div>
-            <div className="font-lexend font-normal text-sm sm:text-lg truncate">
-              {currentlyPlaying.track_name}
-            </div>
+      <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto">
+        <div className="flex-1 sm:flex-none sm:text-right h-16 sm:h-20 flex flex-col justify-between">
+          <div className="text-xs text-spotify font-lexend">
+            NOW PLAYING
+          </div>
+          <Link
+            href={songHref}
+            className="font-lexend font-normal text-sm sm:text-lg truncate hover:underline"
+          >
+            {currentlyPlaying.track_name}
+          </Link>
+          {artistHref ? (
+            <Link
+              href={artistHref}
+              className="font-lexend font-light text-xs sm:text-sm text-muted truncate hover:text-foreground hover:underline transition-colors"
+            >
+              {currentlyPlaying.artist_name}
+            </Link>
+          ) : (
             <div className="font-lexend font-light text-xs sm:text-sm text-muted truncate">
               {currentlyPlaying.artist_name}
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-micro font-lexend text-muted tabular-nums">
-                {formatTime(progressMs)}
-              </span>
-              <div className="flex-1 h-1 rounded-full bg-subtle min-w-progress">
-                <div
-                  className="h-full rounded-full bg-spotify transition-all duration-1000 linear"
-                  style={{ width: `${Math.min(percentage, 100)}%` }}
-                />
-              </div>
-              <span className="text-micro font-lexend text-muted tabular-nums">
-                {formatTime(duration)}
-              </span>
+          )}
+          <div className="flex items-center gap-2">
+            <span className="text-micro font-lexend text-muted tabular-nums">
+              {formatTime(progressMs)}
+            </span>
+            <div className="flex-1 h-1 rounded-full bg-subtle min-w-progress">
+              <div
+                className="h-full rounded-full bg-spotify transition-all duration-1000 linear"
+                style={{ width: `${Math.min(percentage, 100)}%` }}
+              />
             </div>
+            <span className="text-micro font-lexend text-muted tabular-nums">
+              {formatTime(duration)}
+            </span>
           </div>
-          {currentlyPlaying.album_image && (
+        </div>
+        {currentlyPlaying.album_image && (
+          <Link
+            href={imageHref}
+            aria-label="Currently playing"
+            className="shrink-0 hover:opacity-80 transition-opacity"
+          >
             <Image
               src={currentlyPlaying.album_image}
               alt="Currently playing"
               width={80}
               height={80}
-              className="w-16 h-16 sm:w-20 sm:h-20 rounded-md shrink-0"
+              className="w-16 h-16 sm:w-20 sm:h-20 rounded-md"
             />
-          )}
-        </Link>
-      )}
+          </Link>
+        )}
+      </div>
     </div>
   );
 }

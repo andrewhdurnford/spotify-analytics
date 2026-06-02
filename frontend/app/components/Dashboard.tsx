@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import TimelineSelector from '@/app/components/TimelineSelector';
 import CurrentlyPlaying from '@/app/components/CurrentlyPlaying';
@@ -8,6 +9,7 @@ import ListeningStats from '@/app/components/ListeningStats';
 import MediaSection from '@/app/components/MediaSection';
 import RecentlyPlayedSection from '@/app/components/RecentlyPlayedSection';
 import { fetcher } from '@/app/lib/fetcher';
+import { timeframeQuery } from '@/app/lib/timeframe';
 import type {
   Song,
   Artist,
@@ -39,14 +41,14 @@ export default function Dashboard({
   initialTimeframe,
   initialDate,
 }: DashboardProps) {
+  const router = useRouter();
   const [currentTimeframe, setCurrentTimeframe] = useState(initialTimeframe);
   const [currentDate, setCurrentDate] = useState<string | null>(initialDate);
 
-  const params = useMemo(() => {
-    const p = new URLSearchParams({ timeframe: currentTimeframe });
-    if (currentDate) p.set('date', currentDate);
-    return p.toString();
-  }, [currentTimeframe, currentDate]);
+  const params = useMemo(
+    () => timeframeQuery(currentTimeframe, currentDate),
+    [currentTimeframe, currentDate],
+  );
 
   const {
     data: songs,
@@ -99,6 +101,7 @@ export default function Dashboard({
   const handleTimeframeChange = (timeframe: string, date: string | null) => {
     setCurrentTimeframe(timeframe);
     setCurrentDate(date);
+    router.replace(`/?${timeframeQuery(timeframe, date)}`, { scroll: false });
   };
 
   return (
@@ -133,7 +136,7 @@ export default function Dashboard({
         <div className="space-y-6 sm:space-y-8">
           <ListeningStats stats={stats} />
           <MediaSection title="Top Songs" items={songs ?? []} type="songs" timeframe={currentTimeframe} date={currentDate} />
-          <MediaSection title="Top Albums" items={albums ?? []} type="albums" />
+          <MediaSection title="Top Albums" items={albums ?? []} type="albums" timeframe={currentTimeframe} date={currentDate} />
           <MediaSection title="Top Artists" items={artists ?? []} type="artists" timeframe={currentTimeframe} date={currentDate} />
           <RecentlyPlayedSection
             title="Recently Played"

@@ -54,33 +54,51 @@ export default function RecentlyPlayedSection({
         </p>
       ) : (
         <div className="rounded-lg border border-subtle bg-surface divide-y divide-subtle overflow-hidden">
-          {items.map((item, idx) => (
-            <Link
-              key={getRowKey(item, idx)}
-              href={buildSongHref(item)}
-              className="block hover:bg-surface-hover transition-colors"
-            >
-              <div className="grid grid-cols-recent-play items-center gap-3 sm:gap-6 px-3 sm:px-4 py-3">
+          {items.map((item, idx) => {
+            const songHref = buildSongHref(item);
+            return (
+              <div
+                key={getRowKey(item, idx)}
+                className="grid grid-cols-recent-play items-center gap-3 sm:gap-6 px-3 sm:px-4 py-3 hover:bg-surface-hover transition-colors"
+              >
                 <div className="flex items-center gap-3 min-w-0">
-                  {item.album_image ? (
-                    <Image
-                      src={item.album_image}
-                      alt={`${item.track_name} cover`}
-                      width={48}
-                      height={48}
-                      className="w-10 h-10 sm:w-12 sm:h-12 rounded-md object-cover shrink-0"
-                    />
-                  ) : (
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-md bg-subtle shrink-0" />
-                  )}
+                  <Link
+                    href={songHref}
+                    aria-label={`${item.track_name} cover`}
+                    className="shrink-0 hover:opacity-80 transition-opacity"
+                  >
+                    {item.album_image ? (
+                      <Image
+                        src={item.album_image}
+                        alt={`${item.track_name} cover`}
+                        width={48}
+                        height={48}
+                        className="w-10 h-10 sm:w-12 sm:h-12 rounded-md object-cover shrink-0"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-md bg-subtle shrink-0" />
+                    )}
+                  </Link>
 
                   <div className="min-w-0">
-                    <div className="font-lexend font-normal text-sm sm:text-base truncate">
+                    <Link
+                      href={songHref}
+                      className="font-lexend font-normal text-sm sm:text-base truncate block hover:text-foreground hover:underline transition-colors"
+                    >
                       {item.track_name}
-                    </div>
-                    <div className="font-lexend font-light text-xs sm:text-sm text-muted truncate">
-                      {item.artist_name}
-                    </div>
+                    </Link>
+                    {item.artist_id ? (
+                      <Link
+                        href={`/artists/${item.artist_id}`}
+                        className="font-lexend font-light text-xs sm:text-sm text-muted truncate block hover:text-foreground hover:underline transition-colors"
+                      >
+                        {item.artist_name}
+                      </Link>
+                    ) : (
+                      <div className="font-lexend font-light text-xs sm:text-sm text-muted truncate">
+                        {item.artist_name}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -88,8 +106,8 @@ export default function RecentlyPlayedSection({
                   {formatPlayedAt(item.played_at)}
                 </div>
               </div>
-            </Link>
-          ))}
+            );
+          })}
         </div>
       )}
 

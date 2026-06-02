@@ -36,6 +36,60 @@
   grid-template-columns: repeat(auto-fit, minmax(8.5rem, auto));
 }
 
+/* Horizontal scroll row with a soft fade on the left/right edges so cards
+   that overflow the viewport feather out instead of getting hard-clipped.
+   Fade width matches the page padding (p-4 / sm:p-6 / md:p-8). */
+@utility scroll-row-fade {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black 1rem,
+    black calc(100% - 1rem),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black 1rem,
+    black calc(100% - 1rem),
+    transparent 100%
+  );
+
+  @variant sm {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      black 1.5rem,
+      black calc(100% - 1.5rem),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      black 1.5rem,
+      black calc(100% - 1.5rem),
+      transparent 100%
+    );
+  }
+
+  @variant md {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      black 2rem,
+      black calc(100% - 2rem),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      black 2rem,
+      black calc(100% - 2rem),
+      transparent 100%
+    );
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --foreground-rgb: 0, 26, 35;
