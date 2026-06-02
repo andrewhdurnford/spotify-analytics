@@ -218,6 +218,7 @@ class TestGetTopAlbums:
         assert len(results) == 2
         assert results[0].album_name == "Album 1"
         assert results[0].play_count == 3
+        assert results[0].artist_id == "artist1"
 
 
 class TestGetListeningStats:
@@ -231,7 +232,6 @@ class TestGetListeningStats:
         assert result.unique_artists == 2
         assert result.unique_albums == 2
         assert result.active_days == 4
-        assert result.average_play_ms == 195_000
 
     def test_month_filter(self, db: Session):
         _seed_data(db)
@@ -253,7 +253,6 @@ class TestGetListeningStats:
         assert result.unique_artists == 0
         assert result.unique_albums == 0
         assert result.active_days == 0
-        assert result.average_play_ms == 0
 
 
 class TestGetAvailablePeriods:

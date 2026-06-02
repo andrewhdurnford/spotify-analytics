@@ -185,9 +185,12 @@ def get_top_albums(
 ) -> list[TopAlbum]:
     # Albums don't have their own ID, so group by album_name + artist_name.
     # Still benefits from the played_at index for the date filter.
+    # artist_id can be NULL on some streams; use MAX to pick a non-null value
+    # for the group rather than splitting groups across NULL/known ids.
     stmt = select(
         Stream.album_name,
         Stream.artist_name,
+        func.max(Stream.artist_id).label("artist_id"),
         Track.album_image,
         func.count(Stream.id).label("play_count"),
     ).outerjoin(Track, Stream.track_id == Track.spotify_id)
@@ -211,6 +214,7 @@ def get_top_albums(
         TopAlbum(
             album_name=r.album_name,
             artist_name=r.artist_name,
+            artist_id=r.artist_id,
             album_image=r.album_image,
             play_count=r.play_count,
         )
@@ -229,12 +233,16 @@ def get_listening_stats(
     song_key = func.coalesce(Stream.track_id, Stream.track_name)
     artist_key = func.coalesce(Stream.artist_id, Stream.artist_name)
 
-    stmt = select(
-        func.count(Stream.id).label("total_play_count"),
-        func.coalesce(func.sum(Stream.duration_ms), 0).label("total_listening_ms"),
-        func.count(func.distinct(song_key)).label("unique_songs"),
-        func.count(func.distinct(artist_key)).label("unique_artists"),
-        func.count(func.distinct(func.date(Stream.played_at))).label("active_days"),
+    stmt = (
+        select(
+            func.count(Stream.id).label("total_play_count"),
+            func.coalesce(func.sum(Track.duration_ms), 0).label("total_listening_ms"),
+            func.count(func.distinct(song_key)).label("unique_songs"),
+            func.count(func.distinct(artist_key)).label("unique_artists"),
+            func.count(func.distinct(func.date(Stream.played_at))).label("active_days"),
+        )
+        .select_from(Stream)
+        .outerjoin(Track, Track.spotify_id == Stream.track_id)
     )
 
     albums_stmt = select(Stream.album_name, Stream.artist_name).where(
@@ -264,9 +272,6 @@ def get_listening_stats(
         unique_artists=int(result.unique_artists or 0),
         unique_albums=int(unique_albums or 0),
         active_days=int(result.active_days or 0),
-        average_play_ms=round(total_listening_ms / total_play_count)
-        if total_play_count
-        else 0,
     )
 
 

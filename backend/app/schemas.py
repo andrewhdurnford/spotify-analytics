@@ -24,6 +24,7 @@ class TopArtist(BaseModel):
 class TopAlbum(BaseModel):
     album_name: str | None = None
     artist_name: str
+    artist_id: str | None = None
     album_image: str | None = None
     play_count: int
 
@@ -35,7 +36,6 @@ class ListeningStats(BaseModel):
     unique_artists: int
     unique_albums: int
     active_days: int
-    average_play_ms: int
 
 
 class AvailablePeriods(BaseModel):
@@ -133,6 +133,24 @@ class ArtistDetailResponse(BaseModel):
     top_albums: list[TopAlbum]
     timeline: list[PlayCountOverTime]
     granularity: str  # "monthly" or "daily"
+    available_periods: AvailablePeriods
+
+
+class AlbumDetail(BaseModel):
+    album_name: str
+    artist_name: str
+    artist_id: str | None = None
+    album_image: str | None = None
+    total_play_count: int
+    unique_tracks_played: int
+
+
+class AlbumDetailResponse(BaseModel):
+    album: AlbumDetail
+    top_tracks: list[TopSong]
+    timeline: list[PlayCountOverTime]
+    granularity: str  # "monthly" or "daily"
+    available_periods: AvailablePeriods
 
 
 class TrackDetail(BaseModel):
@@ -150,3 +168,22 @@ class TrackDetailResponse(BaseModel):
     track: TrackDetail
     timeline: list[PlayCountOverTime]
     granularity: str  # "monthly" or "daily"
+    available_periods: AvailablePeriods
+
+
+class RelatedTrack(BaseModel):
+    track_id: str
+    track_name: str
+    artist_id: str | None = None
+    artist_name: str
+    album_image: str | None = None
+    cooc_sessions: int
+    # Fraction of the target track's sessions that also contained this track.
+    # Intuitive display value: "X% of your [target] sessions".
+    cooc_rate: float
+    # Cosine similarity over session-membership. Used for ranking.
+    score: float
+
+
+class RelatedTracksResponse(BaseModel):
+    related: list[RelatedTrack]

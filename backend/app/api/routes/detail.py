@@ -2,7 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...schemas import ArtistDetailResponse, TrackDetailResponse
+from ...schemas import (
+    AlbumDetailResponse,
+    ArtistDetailResponse,
+    RelatedTracksResponse,
+    TrackDetailResponse,
+)
 from ...services import detail as detail_service
 from ..params import Timeframe, parse_date_param
 
@@ -27,6 +32,33 @@ def get_artist_detail(
                 "error": {
                     "code": "ARTIST_NOT_FOUND",
                     "message": f"Artist with ID '{artist_id}' not found.",
+                }
+            },
+        )
+    return result
+
+
+@router.get("/albums/by-name", response_model=AlbumDetailResponse)
+def get_album_detail_by_name(
+    artist_id: str = Query(...),
+    album_name: str = Query(...),
+    timeframe: Timeframe = "all",
+    date: str = Query(None),
+    limit: int = 25,
+    db: Session = Depends(get_db),
+):
+    """Get detailed information for an album, keyed by (artist_id, album_name)."""
+    base_date = parse_date_param(date)
+    result = detail_service.get_album_detail(
+        db, artist_id, album_name, timeframe, base_date, limit
+    )
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": {
+                    "code": "ALBUM_NOT_FOUND",
+                    "message": f"Album '{album_name}' for artist '{artist_id}' not found.",
                 }
             },
         )
@@ -70,6 +102,33 @@ def get_track_detail(
     base_date = parse_date_param(date)
     result = detail_service.get_track_detail(db, track_id, timeframe, base_date)
     if not result:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": {
+                    "code": "TRACK_NOT_FOUND",
+                    "message": f"Track with ID '{track_id}' not found.",
+                }
+            },
+        )
+    return result
+
+
+@router.get("/tracks/{track_id}/related", response_model=RelatedTracksResponse)
+def get_related_tracks(
+    track_id: str,
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    """Get tracks frequently played in the same listening session as this one.
+
+    Uses session-based co-occurrence over all-time history. Sessions are
+    contiguous runs of plays with no gap > 30 min. Results are scored with
+    cosine similarity over session-membership and require at least 3
+    co-occurring sessions to surface.
+    """
+    result = detail_service.get_related_tracks(db, track_id, limit=limit)
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail={

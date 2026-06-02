@@ -17,6 +17,7 @@ export interface Artist {
 export interface Album {
   album_name: string;
   artist_name: string;
+  artist_id: string | null;
   album_image: string | null;
   play_count: number;
 }
@@ -34,7 +35,6 @@ export interface ListeningStats {
   unique_artists: number;
   unique_albums: number;
   active_days: number;
-  average_play_ms: number;
 }
 
 export interface RecentlyPlayedItem {
@@ -78,6 +78,24 @@ export interface ArtistDetailResponse {
   top_albums: Album[];
   timeline: PlayCountOverTime[];
   granularity: string;
+  available_periods: AvailablePeriods;
+}
+
+export interface AlbumDetail {
+  album_name: string;
+  artist_name: string;
+  artist_id: string | null;
+  album_image: string | null;
+  total_play_count: number;
+  unique_tracks_played: number;
+}
+
+export interface AlbumDetailResponse {
+  album: AlbumDetail;
+  top_tracks: Song[];
+  timeline: PlayCountOverTime[];
+  granularity: string;
+  available_periods: AvailablePeriods;
 }
 
 export interface TrackDetail {
@@ -95,4 +113,21 @@ export interface TrackDetailResponse {
   track: TrackDetail;
   timeline: PlayCountOverTime[];
   granularity: string;
+  available_periods: AvailablePeriods;
+}
+
+export interface RelatedTrack {
+  track_id: string;
+  track_name: string;
+  artist_id: string | null;
+  artist_name: string;
+  album_image: string | null;
+  cooc_sessions: number;
+  /** Fraction of target's sessions that also contained this track (0-1). */
+  cooc_rate: number;
+  score: number;
+}
+
+export interface RelatedTracksResponse {
+  related: RelatedTrack[];
 }
