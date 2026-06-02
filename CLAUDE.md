@@ -19,6 +19,54 @@ Lean guidance for working in this repo.
 - Frontend build: `cd frontend && npm run build`
 - DB migrations: `docker compose exec backend alembic upgrade head`
 
+## Run Locally
+
+Preferred path:
+
+```bash
+docker compose up --build
+```
+
+If Docker is unavailable, run the two apps directly.
+
+Backend:
+
+```bash
+cd backend
+set -a
+source <(grep -v '^SPOTIFY_REDIRECT_URI=' ../.env)
+set +a
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Frontend, in a second terminal:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Check that both are up:
+
+```bash
+curl http://localhost:8000/health
+curl -I http://localhost:3000
+```
+
+Expected URLs:
+
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:8000`
+- Backend health: `http://localhost:8000/health`
+
+Notes:
+
+- The root `.env` is required for the direct backend run.
+- `SPOTIFY_REDIRECT_URI` is filtered out in the direct-run command because the
+  current backend settings reject unknown `.env` keys.
+- If `ENABLE_LOCAL_SYNC=true`, the backend will poll Spotify current playback
+  while it is running.
+
 ## Backend Conventions
 
 - Keep routes in `backend/app/api/routes/` thin.
