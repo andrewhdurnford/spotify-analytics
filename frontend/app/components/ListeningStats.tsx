@@ -20,14 +20,6 @@ function formatMinutes(ms: number): string {
   return formatNumber(minutes);
 }
 
-function formatAverage(ms: number): string {
-  if (ms <= 0) return '0:00';
-  const totalSeconds = Math.round(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
-}
-
 export default function ListeningStats({ stats }: ListeningStatsProps) {
   if (!stats || stats.total_play_count === 0) {
     return (
@@ -47,7 +39,6 @@ export default function ListeningStats({ stats }: ListeningStatsProps) {
     { label: 'Artists', value: formatNumber(stats.unique_artists) },
     { label: 'Albums', value: formatNumber(stats.unique_albums) },
     { label: 'Listening days', value: formatNumber(stats.active_days) },
-    { label: 'Avg play', value: formatAverage(stats.average_play_ms) },
   ];
 
   return (

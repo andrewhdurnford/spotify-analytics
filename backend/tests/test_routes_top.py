@@ -104,7 +104,6 @@ class TestStatsRoute:
         assert body["unique_artists"] == 1
         assert body["unique_albums"] == 1
         assert body["active_days"] == 1
-        assert body["average_play_ms"] == 200_000
 
     def test_with_timeframe_and_date(self, client, db):
         _seed(db)

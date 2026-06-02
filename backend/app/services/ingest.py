@@ -124,7 +124,11 @@ def parse_streaming_records(
             or item.get("albumName")
             or item.get("album_name")
         )
-        duration_ms = item.get("ms_played") or item.get("msPlayed") or item.get("duration_ms") or 0
+        # `Stream.duration_ms` is a denormalized cache of the track length used
+        # before metadata enrichment runs; canonical length is `Track.duration_ms`.
+        # We deliberately ignore `ms_played` — every retained row represents a
+        # completed-enough play, so partial-play durations are not the right value.
+        duration_ms = item.get("duration_ms") or 0
 
         track_uri = item.get("spotify_track_uri", "")
         track_id = track_uri.replace("spotify:track:", "") if track_uri else ""

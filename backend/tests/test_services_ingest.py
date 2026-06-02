@@ -70,7 +70,9 @@ def test_parse_streaming_records_normalizes_valid_rows_and_counts_skips():
     assert records[0].artist_name == "Artist"
     assert records[0].album_name == "Album"
     assert records[0].played_at == datetime(2025, 1, 2, 3, 4, 5)
-    assert records[0].duration_ms == 123000
+    # `ms_played` is intentionally ignored — track length comes from Track
+    # metadata enrichment (Spotify API), not from the export row.
+    assert records[0].duration_ms == 0
     assert records[0].track_id == "track-1"
     assert records[0].artist_id == "artist-1"
 

@@ -40,7 +40,6 @@ export default async function Home({
     unique_artists: 0,
     unique_albums: 0,
     active_days: 0,
-    average_play_ms: 0,
   };
   let initialRecentlyPlayed: RecentlyPlayedItem[] = [];
   let initialPeriods: AvailablePeriods = { years: [], earliest_date: null, latest_date: null };
