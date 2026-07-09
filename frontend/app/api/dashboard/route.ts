@@ -19,6 +19,7 @@ const API_URL =
  * the response shape can't drift apart.
  */
 const SECTION_KEYS = ['songs', 'artists', 'albums', 'stats', 'timeline', 'periods'] as const;
+const TIMEFRAMES = new Set(['all', 'year', 'quarter', 'month', 'week', 'day']);
 
 // This route always makes fresh upstream requests and applies its own
 // Cache-Control header (see below), independent of Next.js's data cache and
@@ -28,6 +29,45 @@ export const dynamic = 'force-dynamic';
 interface SectionResult<T> {
   ok: boolean;
   data: T | null;
+}
+
+function canonicalDashboardQuery(searchParams: URLSearchParams): string | null {
+  if ([...searchParams.keys()].some((key) => key !== 'timeframe' && key !== 'date')) {
+    return null;
+  }
+
+  const timeframes = searchParams.getAll('timeframe');
+  const dates = searchParams.getAll('date');
+  if (timeframes.length > 1 || dates.length > 1 || (dates.length === 1 && timeframes.length === 0)) {
+    return null;
+  }
+
+  const canonical = new URLSearchParams();
+  if (timeframes.length === 1) {
+    const timeframe = timeframes[0];
+    if (!TIMEFRAMES.has(timeframe)) return null;
+    canonical.set('timeframe', timeframe);
+  }
+
+  if (dates.length === 1) {
+    const date = dates[0];
+    const parsed = new Date(`${date}T00:00:00Z`);
+    const tomorrow = new Date();
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      Number.isNaN(parsed.valueOf()) ||
+      parsed.toISOString().slice(0, 10) !== date ||
+      date < '2000-01-01' ||
+      parsed > tomorrow
+    ) {
+      return null;
+    }
+    canonical.set('date', date);
+  }
+
+  const query = canonical.toString();
+  return query === searchParams.toString() ? query : null;
 }
 
 async function fetchSection<T>(path: string): Promise<SectionResult<T>> {
@@ -44,7 +84,18 @@ async function fetchSection<T>(path: string): Promise<SectionResult<T>> {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const query = searchParams.toString();
+  const query = canonicalDashboardQuery(searchParams);
+  if (query === null) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'INVALID_QUERY',
+          message: 'Only canonical timeframe and date parameters are accepted.',
+        },
+      },
+      { status: 400, headers: { 'Cache-Control': DASHBOARD_NO_STORE_CACHE_CONTROL } },
+    );
+  }
   const suffix = query ? `?${query}` : '';
 
   const [songs, artists, albums, stats, timeline, periods] = await Promise.all([

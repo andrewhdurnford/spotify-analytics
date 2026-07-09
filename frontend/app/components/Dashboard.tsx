@@ -117,16 +117,16 @@ export default function Dashboard({
       <div className="space-y-6 sm:space-y-8">
         {dashboardLoading ? <LoadingSection title="Period Stats" /> : <ListeningStats stats={stats} />}
 
-        {dashboardData ? (
+        {dashboardLoading ? (
+          <LoadingSection title="Listening Over Time" />
+        ) : dashboardData ? (
           timeline.length > 0 && (
             <div>
               <h2 className="font-tinos text-xl sm:text-2xl font-normal mb-4">Listening Over Time</h2>
               <ListeningTimeline data={timeline} granularity={timelineGranularity} />
             </div>
           )
-        ) : (
-          <LoadingSection title="Listening Over Time" />
-        )}
+        ) : null}
 
         {dashboardLoading ? (
           <LoadingSection title="Top Songs" cards />

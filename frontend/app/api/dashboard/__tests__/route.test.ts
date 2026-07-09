@@ -89,6 +89,25 @@ describe("GET /api/dashboard", () => {
     expect(calledUrls).toContain(`${API_URL}/api/top/available-periods`);
   });
 
+  it.each([
+    "?timeframe=all&nonce=1",
+    "?timeframe=all&timeframe=month",
+    "?date=2025-01-01",
+    "?date=2025-01-01&timeframe=month",
+    "?timeframe=month&date=not-a-date",
+  ])("rejects non-canonical query strings without calling the backend: %s", async (query) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await GET(makeRequest(query));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error.code).toBe("INVALID_QUERY");
+    expect(res.headers.get("Cache-Control")).toBe(DASHBOARD_NO_STORE_CACHE_CONTROL);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("sets a five-minute stale-while-revalidate Cache-Control header on success", async () => {
     mockAllUpstreamsSucceed();
 

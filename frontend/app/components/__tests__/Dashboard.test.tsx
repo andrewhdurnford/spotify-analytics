@@ -166,6 +166,7 @@ describe("Dashboard", () => {
     render(<Dashboard initialTimeframe="all" initialDate={null} />);
 
     expect(screen.getByText(/Failed to load data/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Loading Listening Over Time")).not.toBeInTheDocument();
   });
 
   it("shows an error banner when the combined response reports partial upstream errors", () => {
