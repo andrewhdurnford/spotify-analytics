@@ -131,3 +131,8 @@ export interface RelatedTrack {
 export interface RelatedTracksResponse {
   related: RelatedTrack[];
 }
+
+export interface TimelineResponse {
+  timeline: PlayCountOverTime[];
+  granularity: string;
+}
