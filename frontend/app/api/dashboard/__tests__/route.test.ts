@@ -94,6 +94,10 @@ describe("GET /api/dashboard", () => {
     "?timeframe=all&timeframe=month",
     "?date=2025-01-01",
     "?date=2025-01-01&timeframe=month",
+    "?timeframe=all&date=2025-01-01",
+    "?timeframe=year&date=2025-02-01",
+    "?timeframe=month&date=2025-01-02",
+    "?timeframe=week&date=2025-01-01",
     "?timeframe=month&date=not-a-date",
   ])("rejects non-canonical query strings without calling the backend: %s", async (query) => {
     const fetchMock = vi.fn();

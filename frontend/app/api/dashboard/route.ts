@@ -19,7 +19,7 @@ const API_URL =
  * the response shape can't drift apart.
  */
 const SECTION_KEYS = ['songs', 'artists', 'albums', 'stats', 'timeline', 'periods'] as const;
-const TIMEFRAMES = new Set(['all', 'year', 'quarter', 'month', 'week', 'day']);
+const TIMEFRAMES = new Set(['all', 'year', 'month']);
 
 // This route always makes fresh upstream requests and applies its own
 // Cache-Control header (see below), independent of Next.js's data cache and
@@ -43,10 +43,18 @@ function canonicalDashboardQuery(searchParams: URLSearchParams): string | null {
   }
 
   const canonical = new URLSearchParams();
+  let timeframe: string | null = null;
   if (timeframes.length === 1) {
-    const timeframe = timeframes[0];
+    timeframe = timeframes[0];
     if (!TIMEFRAMES.has(timeframe)) return null;
     canonical.set('timeframe', timeframe);
+  }
+
+  if (
+    (timeframe === 'all' && dates.length !== 0) ||
+    ((timeframe === 'year' || timeframe === 'month') && dates.length !== 1)
+  ) {
+    return null;
   }
 
   if (dates.length === 1) {
@@ -61,6 +69,9 @@ function canonicalDashboardQuery(searchParams: URLSearchParams): string | null {
       date < '2000-01-01' ||
       parsed > tomorrow
     ) {
+      return null;
+    }
+    if ((timeframe === 'year' && !date.endsWith('-01-01')) || date.slice(8) !== '01') {
       return null;
     }
     canonical.set('date', date);
