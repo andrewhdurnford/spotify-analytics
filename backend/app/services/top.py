@@ -6,12 +6,12 @@ request parsing and response serialisation.
 
 import logging
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import desc, extract, func, select
 from sqlalchemy.orm import Session
 
-from ..models import Artist, Stream, Track
+from ..models import Artist, DailyListeningStats, DailyTrackStats, Stream, Track
 from ..schemas import (
     AvailablePeriods,
     ListeningStats,
@@ -23,7 +23,8 @@ from ..schemas import (
     TopArtist,
     TopSong,
 )
-from .timezone import display_naive_to_utc, display_timestamp, utc_naive_to_display
+from .rollups import NO_ALBUM_SENTINEL
+from .timezone import display_naive_to_utc, utc_naive_to_display
 
 logger = logging.getLogger(__name__)
 
@@ -68,46 +69,59 @@ def get_date_range(timeframe: str, base_date: datetime) -> tuple[datetime | None
     return display_naive_to_utc(start), display_naive_to_utc(end)
 
 
+def get_local_date_range(timeframe: str, base_date: datetime) -> tuple[date | None, date | None]:
+    """Return Toronto-local calendar date boundaries [start, end) for a timeframe.
+
+    Rollup tables store a plain local calendar `date`, so rollup-backed
+    queries filter on this instead of the UTC storage boundaries `streams`
+    queries use. Derived from get_date_range's UTC boundaries so the two stay
+    in lockstep by construction.
+    """
+    start, end = get_date_range(timeframe, base_date)
+    if start is None or end is None:
+        return None, None
+    return utc_naive_to_display(start).date(), utc_naive_to_display(end).date()
+
+
 def get_top_songs(
     db: Session,
     timeframe: str,
     base_date: datetime,
     limit: int,
 ) -> list[TopSong]:
-    # Aggregate by track_id (indexed) in a subquery, then join for metadata.
-    # Falls back to grouping by name strings for streams without a track_id.
-    group_key = func.coalesce(Stream.track_id, Stream.track_name).label("group_key")
+    """Rollup-backed: sums daily_track_stats grouped by track_key instead of
+    scanning every raw stream row."""
+    start_date, end_date = get_local_date_range(timeframe, base_date)
+
     counts = select(
-        group_key,
-        func.count(Stream.id).label("play_count"),
+        DailyTrackStats.track_key,
+        func.max(DailyTrackStats.track_name).label("track_name"),
+        func.max(DailyTrackStats.artist_name).label("artist_name"),
+        func.max(DailyTrackStats.track_id).label("track_id"),
+        func.max(DailyTrackStats.artist_id).label("artist_id"),
+        func.sum(DailyTrackStats.play_count).label("play_count"),
+    )
+    if start_date and end_date:
+        counts = counts.where(DailyTrackStats.date >= start_date, DailyTrackStats.date < end_date)
+    counts = (
+        counts.group_by(DailyTrackStats.track_key)
+        .order_by(desc("play_count"))
+        .limit(limit)
+        .subquery()
     )
 
-    start, end = get_date_range(timeframe, base_date)
-    if start and end:
-        counts = counts.where(Stream.played_at >= start, Stream.played_at < end)
-
-    counts = counts.group_by("group_key").order_by(desc("play_count")).limit(limit).subquery()
-
-    # Join back to streams + tracks to get display names and album art.
+    # Album art stays a live join against tracks (not stored in the rollup)
+    # so it reflects the latest known metadata.
     query = (
         select(
-            Stream.track_name,
-            Stream.artist_name,
-            Stream.track_id,
-            Stream.artist_id,
+            counts.c.track_name,
+            counts.c.artist_name,
+            counts.c.track_id,
+            counts.c.artist_id,
             Track.album_image,
             counts.c.play_count,
         )
-        .join(counts, func.coalesce(Stream.track_id, Stream.track_name) == counts.c.group_key)
-        .outerjoin(Track, Stream.track_id == Track.spotify_id)
-        .group_by(
-            Stream.track_name,
-            Stream.artist_name,
-            Stream.track_id,
-            Stream.artist_id,
-            Track.album_image,
-            counts.c.play_count,
-        )
+        .outerjoin(Track, counts.c.track_id == Track.spotify_id)
         .order_by(desc(counts.c.play_count))
     )
 
@@ -123,7 +137,7 @@ def get_top_songs(
             track_id=r.track_id,
             artist_id=r.artist_id,
             album_image=r.album_image,
-            play_count=r.play_count,
+            play_count=int(r.play_count),
         )
         for r in results
     ]
@@ -135,32 +149,32 @@ def get_top_artists(
     base_date: datetime,
     limit: int,
 ) -> list[TopArtist]:
-    # Aggregate by artist_id (indexed) in a subquery, then join for metadata.
-    group_key = func.coalesce(Stream.artist_id, Stream.artist_name).label("group_key")
+    """Rollup-backed: sums daily_track_stats grouped by artist_key."""
+    start_date, end_date = get_local_date_range(timeframe, base_date)
+
     counts = select(
-        group_key,
-        func.count(Stream.id).label("play_count"),
+        DailyTrackStats.artist_key,
+        func.max(DailyTrackStats.artist_name).label("artist_name"),
+        func.max(DailyTrackStats.artist_id).label("artist_id"),
+        func.sum(DailyTrackStats.play_count).label("play_count"),
     )
-
-    start, end = get_date_range(timeframe, base_date)
-    if start and end:
-        counts = counts.where(Stream.played_at >= start, Stream.played_at < end)
-
-    counts = counts.group_by("group_key").order_by(desc("play_count")).limit(limit).subquery()
+    if start_date and end_date:
+        counts = counts.where(DailyTrackStats.date >= start_date, DailyTrackStats.date < end_date)
+    counts = (
+        counts.group_by(DailyTrackStats.artist_key)
+        .order_by(desc("play_count"))
+        .limit(limit)
+        .subquery()
+    )
 
     query = (
         select(
-            Stream.artist_name,
-            Stream.artist_id,
+            counts.c.artist_name,
+            counts.c.artist_id,
             Artist.image_url,
             counts.c.play_count,
         )
-        .join(
-            counts,
-            func.coalesce(Stream.artist_id, Stream.artist_name) == counts.c.group_key,
-        )
-        .outerjoin(Artist, Stream.artist_id == Artist.spotify_id)
-        .group_by(Stream.artist_name, Stream.artist_id, Artist.image_url, counts.c.play_count)
+        .outerjoin(Artist, counts.c.artist_id == Artist.spotify_id)
         .order_by(desc(counts.c.play_count))
     )
 
@@ -174,7 +188,7 @@ def get_top_artists(
             artist_name=r.artist_name,
             spotify_id=r.artist_id,
             image_url=r.image_url,
-            play_count=r.play_count,
+            play_count=int(r.play_count),
         )
         for r in results
     ]
@@ -186,26 +200,38 @@ def get_top_albums(
     base_date: datetime,
     limit: int,
 ) -> list[TopAlbum]:
-    # Albums don't have their own ID, so group by album_name + artist_name.
-    # Still benefits from the played_at index for the date filter.
-    # artist_id can be NULL on some streams; use MAX to pick a non-null value
-    # for the group rather than splitting groups across NULL/known ids.
+    """Rollup-backed: sums daily_track_stats grouped by (album, artist_name)."""
+    start_date, end_date = get_local_date_range(timeframe, base_date)
+
     stmt = select(
-        Stream.album_name,
-        Stream.artist_name,
-        func.max(Stream.artist_id).label("artist_id"),
-        Track.album_image,
-        func.count(Stream.id).label("play_count"),
-    ).outerjoin(Track, Stream.track_id == Track.spotify_id)
+        DailyTrackStats.album_key,
+        DailyTrackStats.artist_name,
+        func.max(DailyTrackStats.artist_id).label("artist_id"),
+        func.max(DailyTrackStats.track_id).label("track_id"),
+        func.sum(DailyTrackStats.play_count).label("play_count"),
+    )
+    if start_date and end_date:
+        stmt = stmt.where(DailyTrackStats.date >= start_date, DailyTrackStats.date < end_date)
 
-    start, end = get_date_range(timeframe, base_date)
-    if start and end:
-        stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
-
-    query = (
-        stmt.group_by(Stream.album_name, Stream.artist_name, Track.album_image)
+    counts = (
+        stmt.group_by(DailyTrackStats.album_key, DailyTrackStats.artist_name)
         .order_by(desc("play_count"))
         .limit(limit)
+        .subquery()
+    )
+
+    # Representative track_id (any track on the album) for the live
+    # album_image join, mirroring the old query's live Track join.
+    query = (
+        select(
+            counts.c.album_key,
+            counts.c.artist_name,
+            counts.c.artist_id,
+            Track.album_image,
+            counts.c.play_count,
+        )
+        .outerjoin(Track, counts.c.track_id == Track.spotify_id)
+        .order_by(desc(counts.c.play_count))
     )
 
     t0 = time.perf_counter()
@@ -215,14 +241,33 @@ def get_top_albums(
 
     return [
         TopAlbum(
-            album_name=r.album_name,
+            album_name=r.album_key if r.album_key != NO_ALBUM_SENTINEL else None,
             artist_name=r.artist_name,
             artist_id=r.artist_id,
             album_image=r.album_image,
-            play_count=r.play_count,
+            play_count=int(r.play_count),
         )
         for r in results
     ]
+
+
+def _daily_listening_totals(db: Session, start_date: date | None, end_date: date | None):
+    """Sum/count over daily_listening_stats for a date range.
+
+    One tiny aggregate query (one row per calendar day) replaces the old
+    multi-DISTINCT scan over every raw stream for total_play_count,
+    total_listening_ms, and active_days.
+    """
+    stmt = select(
+        func.coalesce(func.sum(DailyListeningStats.play_count), 0).label("total_play_count"),
+        func.coalesce(func.sum(DailyListeningStats.listening_ms), 0).label("total_listening_ms"),
+        func.count().label("active_days"),
+    )
+    if start_date and end_date:
+        stmt = stmt.where(
+            DailyListeningStats.date >= start_date, DailyListeningStats.date < end_date
+        )
+    return db.execute(stmt).one()
 
 
 def get_listening_stats(
@@ -230,53 +275,50 @@ def get_listening_stats(
     timeframe: str,
     base_date: datetime,
 ) -> ListeningStats:
-    """Return aggregate listening stats for the selected period."""
-    start, end = get_date_range(timeframe, base_date)
+    """Return aggregate listening stats for the selected period.
 
-    song_key = func.coalesce(Stream.track_id, Stream.track_name)
-    artist_key = func.coalesce(Stream.artist_id, Stream.artist_name)
-
-    stmt = (
-        select(
-            func.count(Stream.id).label("total_play_count"),
-            func.coalesce(func.sum(Track.duration_ms), 0).label("total_listening_ms"),
-            func.count(func.distinct(song_key)).label("unique_songs"),
-            func.count(func.distinct(artist_key)).label("unique_artists"),
-            func.count(func.distinct(func.date(display_timestamp(Stream.played_at)))).label(
-                "active_days"
-            ),
-        )
-        .select_from(Stream)
-        .outerjoin(Track, Track.spotify_id == Stream.track_id)
-    )
-
-    albums_stmt = select(Stream.album_name, Stream.artist_name).where(
-        Stream.album_name.is_not(None)
-    )
-
-    if start and end:
-        stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
-        albums_stmt = albums_stmt.where(Stream.played_at >= start, Stream.played_at < end)
-
-    albums_subquery = albums_stmt.distinct().subquery()
-    albums_count_stmt = select(func.count()).select_from(albums_subquery)
+    Rollup-backed. Replaces the old single query with 4 DISTINCT aggregates
+    over raw `streams` (the disk-spill culprit) with: one small SUM/COUNT(*)
+    query over daily_listening_stats (also reused by get_timeline's daily
+    branch — see `_daily_listening_totals`), plus up to 3 small DISTINCT
+    counts over daily_track_stats, which has far fewer rows than `streams`
+    (one row per day an item was played, not one per play).
+    """
+    start_date, end_date = get_local_date_range(timeframe, base_date)
 
     t0 = time.perf_counter()
-    result = db.execute(stmt).one()
-    unique_albums = db.execute(albums_count_stmt).scalar_one()
+
+    totals = _daily_listening_totals(db, start_date, end_date)
+
+    range_filter = ()
+    if start_date and end_date:
+        range_filter = (DailyTrackStats.date >= start_date, DailyTrackStats.date < end_date)
+
+    unique_songs = db.execute(
+        select(func.count(func.distinct(DailyTrackStats.track_key))).where(*range_filter)
+    ).scalar_one()
+    unique_artists = db.execute(
+        select(func.count(func.distinct(DailyTrackStats.artist_key))).where(*range_filter)
+    ).scalar_one()
+
+    albums_subquery = (
+        select(DailyTrackStats.album_key, DailyTrackStats.artist_name)
+        .where(DailyTrackStats.album_key != NO_ALBUM_SENTINEL, *range_filter)
+        .distinct()
+        .subquery()
+    )
+    unique_albums = db.execute(select(func.count()).select_from(albums_subquery)).scalar_one()
+
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(f"get_listening_stats query: {elapsed_ms:.1f}ms ({timeframe})")
 
-    total_play_count = int(result.total_play_count or 0)
-    total_listening_ms = int(result.total_listening_ms or 0)
-
     return ListeningStats(
-        total_play_count=total_play_count,
-        total_listening_ms=total_listening_ms,
-        unique_songs=int(result.unique_songs or 0),
-        unique_artists=int(result.unique_artists or 0),
+        total_play_count=int(totals.total_play_count or 0),
+        total_listening_ms=int(totals.total_listening_ms or 0),
+        unique_songs=int(unique_songs or 0),
+        unique_artists=int(unique_artists or 0),
         unique_albums=int(unique_albums or 0),
-        active_days=int(result.active_days or 0),
+        active_days=int(totals.active_days or 0),
     )
 
 
@@ -285,15 +327,22 @@ def get_timeline(
     timeframe: str,
     base_date: datetime,
 ) -> TimelineResponse:
-    """Return overall play-count timeline grouped by day (month) or month (year/all)."""
-    start, end = get_date_range(timeframe, base_date)
+    """Return overall play-count timeline grouped by day (month) or month (year/all).
+
+    Rollup-backed: daily_listening_stats already has one row per calendar
+    day, so the "daily" branch is a direct range select with no grouping at
+    all; the "monthly" branch groups that same small table by year/month
+    instead of scanning every raw stream.
+    """
+    start_date, end_date = get_local_date_range(timeframe, base_date)
 
     if timeframe == "month":
-        date_col = func.date(display_timestamp(Stream.played_at)).label("day")
-        stmt = select(date_col, func.count(Stream.id).label("play_count"))
-        if start and end:
-            stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
-        stmt = stmt.group_by(date_col).order_by(date_col)
+        stmt = select(DailyListeningStats.date, DailyListeningStats.play_count)
+        if start_date and end_date:
+            stmt = stmt.where(
+                DailyListeningStats.date >= start_date, DailyListeningStats.date < end_date
+            )
+        stmt = stmt.order_by(DailyListeningStats.date)
         granularity = "daily"
 
         t0 = time.perf_counter()
@@ -301,14 +350,17 @@ def get_timeline(
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(f"get_timeline query: {elapsed_ms:.1f}ms ({timeframe})")
 
-        timeline = [PlayCountOverTime(period=str(r.day), play_count=r.play_count) for r in results]
+        timeline = [PlayCountOverTime(period=str(r.date), play_count=r.play_count) for r in results]
     else:
-        local_played_at = display_timestamp(Stream.played_at)
-        year_col = extract("year", local_played_at).label("yr")
-        month_col = extract("month", local_played_at).label("mo")
-        stmt = select(year_col, month_col, func.count(Stream.id).label("play_count"))
-        if start and end:
-            stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
+        year_col = extract("year", DailyListeningStats.date).label("yr")
+        month_col = extract("month", DailyListeningStats.date).label("mo")
+        stmt = select(
+            year_col, month_col, func.sum(DailyListeningStats.play_count).label("play_count")
+        )
+        if start_date and end_date:
+            stmt = stmt.where(
+                DailyListeningStats.date >= start_date, DailyListeningStats.date < end_date
+            )
         stmt = stmt.group_by(year_col, month_col).order_by(year_col, month_col)
         granularity = "monthly"
 
@@ -318,7 +370,7 @@ def get_timeline(
         logger.info(f"get_timeline query: {elapsed_ms:.1f}ms ({timeframe})")
 
         timeline = [
-            PlayCountOverTime(period=f"{int(r.yr)}-{int(r.mo):02d}", play_count=r.play_count)
+            PlayCountOverTime(period=f"{int(r.yr)}-{int(r.mo):02d}", play_count=int(r.play_count))
             for r in results
         ]
 
