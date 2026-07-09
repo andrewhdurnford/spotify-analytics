@@ -10,12 +10,14 @@ os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test?ssl
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
+from app.services.dashboard_cache import dashboard_cache
+from app.services.timezone import sqlite_local_timestamp
 
 # In-memory SQLite for tests ------------------------------------------------
 engine = create_engine(
@@ -23,15 +25,28 @@ engine = create_engine(
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
+
+
+@event.listens_for(engine, "connect")
+def register_timezone_function(dbapi_connection, _connection_record):
+    dbapi_connection.create_function(
+        "spotify_local_timestamp",
+        1,
+        sqlite_local_timestamp,
+    )
+
+
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 @pytest.fixture(autouse=True)
 def setup_database():
     """Create tables before each test and drop them after."""
+    dashboard_cache.clear()
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+    dashboard_cache.clear()
 
 
 @pytest.fixture()

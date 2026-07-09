@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Artist, Stream, Track
+from app.services.dashboard_cache import dashboard_cache
 from app.services.ingest_errors import IssueReporter, spotify_api_issue
 
 DUPLICATE_GRACE = timedelta(seconds=30)
@@ -54,6 +55,7 @@ async def store_completed_play(
     )
     db.add(_stream_from_playback(track, played_at))
     db.commit()
+    dashboard_cache.clear()
 
     return StoreCompletedPlayResult(
         stored=True,
