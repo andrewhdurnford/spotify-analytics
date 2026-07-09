@@ -32,13 +32,16 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date as date_type
 
-from sqlalchemy import Select, delete, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.orm import Session
 
 from ..models import DailyListeningStats, DailyTrackStats, Stream, Track
 from .timezone import utc_naive_to_display
 
 NO_ALBUM_SENTINEL = ""
+# Serializes incremental rollup maintenance and full rebuilds in PostgreSQL.
+# Keep this value in sync with the Alembic migration's backfill lock.
+ROLLUP_ADVISORY_LOCK_ID = 7_315_902_024
 
 
 def local_date_for(played_at) -> date_type:
@@ -75,20 +78,41 @@ def _keys_for_stream(stream: Stream) -> _RollupKeys:
     )
 
 
-def _track_duration_ms(session: Session, track_id: str | None) -> int:
+def _acquire_rollup_write_lock(session: Session) -> None:
+    """Serialize rollup writers/rebuilds on PostgreSQL.
+
+    The lock is transaction-scoped, so it is released automatically on
+    commit or rollback. SQLite tests are single-connection and need no
+    database-specific lock.
+    """
+    bind = session.get_bind()
+    if bind.dialect.name == "postgresql":
+        session.execute(select(func.pg_advisory_xact_lock(ROLLUP_ADVISORY_LOCK_ID)))
+
+
+def _track_duration_ms(
+    session: Session,
+    track_id: str | None,
+    cache: dict[str | None, int] | None = None,
+) -> int:
     """Look up the current known Track.duration_ms for a play.
 
     Mirrors the historical raw-query semantics: unresolved track_id (missing
     or no matching Track row, or a Track with no duration on file) counts as
     zero — never falls back to Stream.duration_ms.
     """
+    if cache is not None and track_id in cache:
+        return cache[track_id]
     if not track_id:
         return 0
     with session.no_autoflush:
         duration = session.execute(
             select(Track.duration_ms).where(Track.spotify_id == track_id)
         ).scalar_one_or_none()
-    return duration or 0
+    result = duration or 0
+    if cache is not None:
+        cache[track_id] = result
+    return result
 
 
 def _get_or_create_daily(
@@ -180,6 +204,7 @@ def apply_stream_to_rollups(
     *,
     daily_cache: dict[date_type, DailyListeningStats] | None = None,
     track_cache: dict[tuple, DailyTrackStats] | None = None,
+    duration_cache: dict[str | None, int] | None = None,
 ) -> None:
     """Read-modify-write the rollup rows for one newly-added Stream.
 
@@ -195,7 +220,7 @@ def apply_stream_to_rollups(
         track_cache = {}
 
     keys = _keys_for_stream(stream)
-    duration_ms = _track_duration_ms(session, stream.track_id)
+    duration_ms = _track_duration_ms(session, stream.track_id, duration_cache)
 
     daily = _get_or_create_daily(session, keys.date, daily_cache)
     daily.play_count += 1
@@ -219,10 +244,22 @@ def maintain_rollups_before_flush(session: Session) -> None:
     if not new_streams:
         return
 
+    # The following SELECT + mutate/INSERT sequence is safe only when writers
+    # sharing a rollup key cannot overlap. A transaction-scoped advisory lock
+    # provides that guarantee for both existing and not-yet-created rows.
+    _acquire_rollup_write_lock(session)
+
     daily_cache: dict[date_type, DailyListeningStats] = {}
     track_cache: dict[tuple, DailyTrackStats] = {}
+    duration_cache: dict[str | None, int] = {}
     for stream in new_streams:
-        apply_stream_to_rollups(session, stream, daily_cache=daily_cache, track_cache=track_cache)
+        apply_stream_to_rollups(
+            session,
+            stream,
+            daily_cache=daily_cache,
+            track_cache=track_cache,
+            duration_cache=duration_cache,
+        )
 
 
 # --- Bulk rebuild -----------------------------------------------------------
@@ -264,6 +301,11 @@ def rebuild_all_rollups(session: Session) -> RollupRebuildStats:
     never disagree on grouping. Idempotent: rerunning against unchanged
     `streams` data produces byte-identical rollup rows.
     """
+    # Block incremental writers before taking the Stream snapshot and hold
+    # the lock through the caller's commit. Otherwise a concurrent increment
+    # could be erased by the delete/reinsert phase below.
+    _acquire_rollup_write_lock(session)
+
     daily_totals: dict[date_type, list[int]] = defaultdict(lambda: [0, 0])  # [play_count, ms]
     track_totals: dict[tuple, dict] = {}
 

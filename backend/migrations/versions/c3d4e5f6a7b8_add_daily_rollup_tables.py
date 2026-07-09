@@ -4,12 +4,8 @@ Revision ID: c3d4e5f6a7b8
 Revises: b2c3d4e5f6a7
 Create Date: 2026-07-08
 
-Creates the two rollup tables only; does not populate them. After upgrading,
-run the backfill script to derive rollup rows from existing `streams`:
-
-    python -m app.scripts.backfill_rollups --commit
-
-(inside the backend container, or against a local .venv per CLAUDE.md).
+Creates and backfills both rollup tables in the migration transaction so the
+application never switches its reads to empty tables.
 """
 
 from collections.abc import Sequence
@@ -22,6 +18,8 @@ revision: str = "c3d4e5f6a7b8"
 down_revision: str | Sequence[str] | None = "b2c3d4e5f6a7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+ROLLUP_ADVISORY_LOCK_ID = 7_315_902_024
 
 
 def upgrade() -> None:
@@ -73,6 +71,89 @@ def upgrade() -> None:
         "ix_daily_track_stats_date_album",
         "daily_track_stats",
         ["date", "album_key", "artist_name"],
+    )
+
+    # Prevent a deploy-time Stream write from landing between the backfill
+    # snapshot and transaction commit. The advisory lock matches the runtime
+    # rollup lock; the table lock also protects against the pre-rollup app
+    # version, which does not know about that advisory lock yet.
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute(sa.text(f"SELECT pg_advisory_xact_lock({ROLLUP_ADVISORY_LOCK_ID})"))
+        op.execute(sa.text("LOCK TABLE streams IN SHARE MODE"))
+
+    local_date = (
+        "(((streams.played_at AT TIME ZONE 'UTC') " "AT TIME ZONE 'America/Toronto')::date)"
+    )
+    op.execute(
+        sa.text(
+            f"""
+            INSERT INTO daily_listening_stats (date, play_count, listening_ms)
+            SELECT
+                {local_date},
+                count(streams.id),
+                coalesce(sum(tracks.duration_ms), 0)
+            FROM streams
+            LEFT JOIN tracks ON tracks.spotify_id = streams.track_id
+            GROUP BY {local_date}
+            """
+        )
+    )
+
+    op.execute(
+        sa.text(
+            f"""
+            WITH inputs AS (
+                SELECT
+                    streams.*,
+                    {local_date} AS local_date,
+                    CASE
+                        WHEN streams.track_id IS NULL OR streams.track_id = ''
+                            THEN 'name:' || streams.track_name
+                        ELSE streams.track_id
+                    END AS computed_track_key,
+                    CASE
+                        WHEN streams.artist_id IS NULL OR streams.artist_id = ''
+                            THEN 'name:' || streams.artist_name
+                        ELSE streams.artist_id
+                    END AS computed_artist_key,
+                    coalesce(nullif(streams.album_name, ''), '') AS computed_album_key,
+                    coalesce(tracks.duration_ms, 0) AS track_duration_ms
+                FROM streams
+                LEFT JOIN tracks ON tracks.spotify_id = streams.track_id
+            )
+            INSERT INTO daily_track_stats (
+                date,
+                track_key,
+                artist_key,
+                album_key,
+                track_id,
+                artist_id,
+                track_name,
+                artist_name,
+                album_name,
+                play_count,
+                listening_ms
+            )
+            SELECT
+                local_date,
+                computed_track_key,
+                computed_artist_key,
+                computed_album_key,
+                max(nullif(track_id, '')),
+                max(nullif(artist_id, '')),
+                (array_agg(track_name ORDER BY id DESC))[1],
+                (array_agg(artist_name ORDER BY id DESC))[1],
+                (array_agg(album_name ORDER BY id DESC))[1],
+                count(id),
+                sum(track_duration_ms)
+            FROM inputs
+            GROUP BY
+                local_date,
+                computed_track_key,
+                computed_artist_key,
+                computed_album_key
+            """
+        )
     )
 
 

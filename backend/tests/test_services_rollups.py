@@ -7,7 +7,7 @@ idempotent reruns, timezone boundaries, partial-day data, and empty ranges.
 
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
 from app.models import Artist, DailyListeningStats, DailyTrackStats, Stream, Track
@@ -219,6 +219,35 @@ class TestIncrementalMaintenance:
         daily = _daily_rows(db)
         assert daily[date(2025, 5, 1)].play_count == 5
         assert len(_track_rows(db)) == 5  # 5 distinct name-fallback track_keys
+
+    def test_repeated_track_in_one_flush_looks_up_duration_once(self, db: Session):
+        db.add(Track(spotify_id="repeat", name="Repeat", duration_ms=123_000))
+        db.commit()
+
+        duration_selects = []
+
+        def record_duration_select(_conn, _cursor, statement, _parameters, _context, _many):
+            if "SELECT tracks.duration_ms" in statement:
+                duration_selects.append(statement)
+
+        event.listen(db.get_bind(), "before_cursor_execute", record_duration_select)
+        try:
+            db.add_all(
+                [
+                    Stream(
+                        track_name="Repeat",
+                        artist_name="Artist",
+                        played_at=datetime(2025, 5, 2, 10, minute),
+                        track_id="repeat",
+                    )
+                    for minute in range(3)
+                ]
+            )
+            db.commit()
+        finally:
+            event.remove(db.get_bind(), "before_cursor_execute", record_duration_select)
+
+        assert len(duration_selects) == 1
 
 
 # ---------------------------------------------------------------------------

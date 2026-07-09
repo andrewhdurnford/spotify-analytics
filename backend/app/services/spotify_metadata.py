@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Artist, Stream, Track
 from app.services.ingest_errors import IssueReporter, spotify_api_issue
+from app.services.rollups import rebuild_all_rollups
 
 BATCH_SIZE = 50
 SPOTIFY_ARTISTS_URL = "https://api.spotify.com/v1/artists"
@@ -133,6 +134,18 @@ def upsert_tracks_from_spotify(
                 warn(issue.message)
             db.rollback()
             continue
+
+    if upserted:
+        # Track duration and Stream.artist_id both feed denormalized rollup
+        # columns/keys. Rebuild once after all successful batches so metadata
+        # enrichment cannot leave historical analytics stale. The rebuild
+        # shares a PostgreSQL advisory lock with incremental Stream writes.
+        try:
+            rebuild_all_rollups(db)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
     return upserted
 

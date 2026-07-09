@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import select
 
-from app.models import Artist, Stream, Track
+from app.models import Artist, DailyListeningStats, DailyTrackStats, Stream, Track
 from app.services.spotify_metadata import (
     get_missing_artist_ids,
     get_missing_track_ids,
@@ -117,6 +117,13 @@ def test_upsert_tracks_inserts_metadata_and_backfills_stream_artist_id(db):
 
     stream = db.execute(select(Stream)).scalar_one()
     assert stream.artist_id == "artist-1"
+
+    daily = db.execute(select(DailyListeningStats)).scalar_one()
+    assert daily.listening_ms == 123000
+    track_rollup = db.execute(select(DailyTrackStats)).scalar_one()
+    assert track_rollup.artist_id == "artist-1"
+    assert track_rollup.artist_key == "artist-1"
+    assert track_rollup.listening_ms == 123000
 
 
 def test_upsert_tracks_updates_existing_metadata(db):
