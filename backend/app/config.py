@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,7 +17,7 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
 
     # App
-    environment: str = "development"
+    environment: Literal["development", "production"] = "development"
 
     # Comma-separated list of hostnames this API is allowed to answer for
     # (used by TrustedHostMiddleware). "*" disables the check; that's the

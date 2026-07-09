@@ -27,6 +27,10 @@ class TestCronSecretProductionRequirement:
         with pytest.raises(ValidationError):
             Settings(database_url=VALID_DB_URL, environment=" Production ", cron_secret="")
 
+    def test_unknown_environment_fails_closed(self):
+        with pytest.raises(ValidationError):
+            Settings(database_url=VALID_DB_URL, environment="prod", cron_secret="secret")
+
     def test_development_with_empty_cron_secret_succeeds(self):
         settings = Settings(database_url=VALID_DB_URL, environment="development", cron_secret="")
         assert settings.cron_secret == ""
