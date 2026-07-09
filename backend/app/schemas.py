@@ -187,3 +187,8 @@ class RelatedTrack(BaseModel):
 
 class RelatedTracksResponse(BaseModel):
     related: list[RelatedTrack]
+
+
+class TimelineResponse(BaseModel):
+    timeline: list[PlayCountOverTime]
+    granularity: str  # "monthly" or "daily"

@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from app.models import Artist, Stream, Track
+from app.services.dashboard_cache import dashboard_cache
 
 
 def _seed(db):
@@ -114,6 +115,31 @@ class TestStatsRoute:
     def test_invalid_date_returns_400(self, client):
         resp = client.get("/api/top/stats?date=bad-date")
         assert resp.status_code == 400
+
+    def test_all_time_result_is_cached_until_invalidated(self, client, db):
+        _seed(db)
+        first = client.get("/api/top/stats?timeframe=all")
+
+        db.add(
+            Stream(
+                track_name="Track 1",
+                artist_name="Art 1",
+                album_name="Alb 1",
+                played_at=datetime(2025, 1, 16, 10, 0),
+                duration_ms=200_000,
+                track_id="t1",
+                artist_id="a1",
+            )
+        )
+        db.commit()
+
+        cached = client.get("/api/top/stats?timeframe=all")
+        dashboard_cache.clear()
+        refreshed = client.get("/api/top/stats?timeframe=all")
+
+        assert first.json()["total_play_count"] == 1
+        assert cached.json()["total_play_count"] == 1
+        assert refreshed.json()["total_play_count"] == 2
 
 
 class TestAvailablePeriodsRoute:

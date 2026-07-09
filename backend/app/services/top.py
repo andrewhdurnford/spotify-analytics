@@ -8,19 +8,22 @@ import logging
 import time
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, extract, func, select
 from sqlalchemy.orm import Session
 
 from ..models import Artist, Stream, Track
 from ..schemas import (
     AvailablePeriods,
     ListeningStats,
+    PlayCountOverTime,
     RecentlyPlayedItem,
     RecentlyPlayedResponse,
+    TimelineResponse,
     TopAlbum,
     TopArtist,
     TopSong,
 )
+from .timezone import display_naive_to_utc, display_timestamp, utc_naive_to_display
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,7 @@ def _to_iso_utc(dt: datetime) -> str:
 
 
 def get_date_range(timeframe: str, base_date: datetime) -> tuple[datetime | None, datetime | None]:
-    """Return (start, end) for a given timeframe, or (None, None) for 'all'."""
+    """Return UTC storage boundaries for a Toronto calendar timeframe."""
     if timeframe == "all":
         return None, None
 
@@ -58,11 +61,11 @@ def get_date_range(timeframe: str, base_date: datetime) -> tuple[datetime | None
             end = start.replace(month=end_month, day=1)
     elif timeframe == "year":
         start = base_date.replace(month=1, day=1, hour=0, minute=0, second=0)
-        end = base_date.replace(month=12, day=31, hour=23, minute=59, second=59)
+        end = start.replace(year=start.year + 1)
     else:
         return None, None
 
-    return start, end
+    return display_naive_to_utc(start), display_naive_to_utc(end)
 
 
 def get_top_songs(
@@ -81,7 +84,7 @@ def get_top_songs(
 
     start, end = get_date_range(timeframe, base_date)
     if start and end:
-        counts = counts.where(Stream.played_at.between(start, end))
+        counts = counts.where(Stream.played_at >= start, Stream.played_at < end)
 
     counts = counts.group_by("group_key").order_by(desc("play_count")).limit(limit).subquery()
 
@@ -141,7 +144,7 @@ def get_top_artists(
 
     start, end = get_date_range(timeframe, base_date)
     if start and end:
-        counts = counts.where(Stream.played_at.between(start, end))
+        counts = counts.where(Stream.played_at >= start, Stream.played_at < end)
 
     counts = counts.group_by("group_key").order_by(desc("play_count")).limit(limit).subquery()
 
@@ -197,7 +200,7 @@ def get_top_albums(
 
     start, end = get_date_range(timeframe, base_date)
     if start and end:
-        stmt = stmt.where(Stream.played_at.between(start, end))
+        stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
 
     query = (
         stmt.group_by(Stream.album_name, Stream.artist_name, Track.album_image)
@@ -239,7 +242,9 @@ def get_listening_stats(
             func.coalesce(func.sum(Track.duration_ms), 0).label("total_listening_ms"),
             func.count(func.distinct(song_key)).label("unique_songs"),
             func.count(func.distinct(artist_key)).label("unique_artists"),
-            func.count(func.distinct(func.date(Stream.played_at))).label("active_days"),
+            func.count(func.distinct(func.date(display_timestamp(Stream.played_at)))).label(
+                "active_days"
+            ),
         )
         .select_from(Stream)
         .outerjoin(Track, Track.spotify_id == Stream.track_id)
@@ -250,8 +255,8 @@ def get_listening_stats(
     )
 
     if start and end:
-        stmt = stmt.where(Stream.played_at.between(start, end))
-        albums_stmt = albums_stmt.where(Stream.played_at.between(start, end))
+        stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
+        albums_stmt = albums_stmt.where(Stream.played_at >= start, Stream.played_at < end)
 
     albums_subquery = albums_stmt.distinct().subquery()
     albums_count_stmt = select(func.count()).select_from(albums_subquery)
@@ -275,6 +280,51 @@ def get_listening_stats(
     )
 
 
+def get_timeline(
+    db: Session,
+    timeframe: str,
+    base_date: datetime,
+) -> TimelineResponse:
+    """Return overall play-count timeline grouped by day (month) or month (year/all)."""
+    start, end = get_date_range(timeframe, base_date)
+
+    if timeframe == "month":
+        date_col = func.date(display_timestamp(Stream.played_at)).label("day")
+        stmt = select(date_col, func.count(Stream.id).label("play_count"))
+        if start and end:
+            stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
+        stmt = stmt.group_by(date_col).order_by(date_col)
+        granularity = "daily"
+
+        t0 = time.perf_counter()
+        results = db.execute(stmt).all()
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(f"get_timeline query: {elapsed_ms:.1f}ms ({timeframe})")
+
+        timeline = [PlayCountOverTime(period=str(r.day), play_count=r.play_count) for r in results]
+    else:
+        local_played_at = display_timestamp(Stream.played_at)
+        year_col = extract("year", local_played_at).label("yr")
+        month_col = extract("month", local_played_at).label("mo")
+        stmt = select(year_col, month_col, func.count(Stream.id).label("play_count"))
+        if start and end:
+            stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
+        stmt = stmt.group_by(year_col, month_col).order_by(year_col, month_col)
+        granularity = "monthly"
+
+        t0 = time.perf_counter()
+        results = db.execute(stmt).all()
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(f"get_timeline query: {elapsed_ms:.1f}ms ({timeframe})")
+
+        timeline = [
+            PlayCountOverTime(period=f"{int(r.yr)}-{int(r.mo):02d}", play_count=r.play_count)
+            for r in results
+        ]
+
+    return TimelineResponse(timeline=timeline, granularity=granularity)
+
+
 def get_recently_played(
     db: Session,
     start_date: datetime | None,
@@ -295,8 +345,8 @@ def get_recently_played(
     )
 
     if start_date:
-        end_of_day = start_date.replace(hour=23, minute=59, second=59, microsecond=999999)
-        stmt = stmt.where(Stream.played_at <= end_of_day)
+        _, next_day = get_date_range("day", start_date)
+        stmt = stmt.where(Stream.played_at < next_day)
 
     offset = (page - 1) * page_size
     query = stmt.offset(offset).limit(page_size + 1)
@@ -347,12 +397,14 @@ def get_available_periods(db: Session) -> AvailablePeriods:
     if not result or not result.earliest:
         return AvailablePeriods(years=[], earliest_date=None, latest_date=None)
 
-    start_year = result.earliest.year
-    end_year = result.latest.year
+    earliest = utc_naive_to_display(result.earliest)
+    latest = utc_naive_to_display(result.latest)
+    start_year = earliest.year
+    end_year = latest.year
     years = list(range(start_year, end_year + 1))
 
     return AvailablePeriods(
         years=years,
-        earliest_date=result.earliest.isoformat(),
-        latest_date=result.latest.isoformat(),
+        earliest_date=earliest.isoformat(),
+        latest_date=latest.isoformat(),
     )

@@ -254,6 +254,34 @@ class TestGetTrackDetail:
             {"period": "2025-01-06", "play_count": 1},
         ]
 
+    def test_daily_timeline_uses_toronto_calendar_date(self, db: Session):
+        _seed_detail_data(db)
+        db.add(
+            Stream(
+                track_name="Song One",
+                artist_name="Artist One",
+                album_name="Album One",
+                played_at=datetime(2025, 1, 7, 2, 0),
+                duration_ms=200_000,
+                track_id="track-1",
+                artist_id="artist-1",
+            )
+        )
+        db.commit()
+
+        result = get_track_detail(
+            db,
+            track_id="track-1",
+            timeframe="month",
+            base_date=datetime(2025, 1, 1),
+        )
+
+        assert result is not None
+        assert [point.model_dump() for point in result.timeline] == [
+            {"period": "2025-01-05", "play_count": 1},
+            {"period": "2025-01-06", "play_count": 2},
+        ]
+
     def test_missing_track_returns_none(self, db: Session):
         result = get_track_detail(
             db,

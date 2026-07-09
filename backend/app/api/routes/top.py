@@ -8,11 +8,17 @@ from ...schemas import (
     CurrentlyPlaying,
     ListeningStats,
     RecentlyPlayedResponse,
+    TimelineResponse,
     TopAlbum,
     TopArtist,
     TopSong,
 )
 from ...services import top as top_service
+from ...services.dashboard_cache import (
+    ALL_TIME_TTL_SECONDS,
+    dashboard_cache,
+    dashboard_ttl,
+)
 from ..params import Timeframe, parse_date_param
 
 router = APIRouter()
@@ -26,7 +32,12 @@ def get_top_songs(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    return top_service.get_top_songs(db, timeframe, base_date, limit)
+    key = ("songs", timeframe, base_date.date().isoformat(), limit)
+    return dashboard_cache.get_or_set(
+        key,
+        dashboard_ttl(timeframe),
+        lambda: top_service.get_top_songs(db, timeframe, base_date, limit),
+    )
 
 
 @router.get("/artists", response_model=list[TopArtist])
@@ -37,7 +48,12 @@ def get_top_artists(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    return top_service.get_top_artists(db, timeframe, base_date, limit)
+    key = ("artists", timeframe, base_date.date().isoformat(), limit)
+    return dashboard_cache.get_or_set(
+        key,
+        dashboard_ttl(timeframe),
+        lambda: top_service.get_top_artists(db, timeframe, base_date, limit),
+    )
 
 
 @router.get("/albums", response_model=list[TopAlbum])
@@ -48,7 +64,12 @@ def get_top_albums(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    return top_service.get_top_albums(db, timeframe, base_date, limit)
+    key = ("albums", timeframe, base_date.date().isoformat(), limit)
+    return dashboard_cache.get_or_set(
+        key,
+        dashboard_ttl(timeframe),
+        lambda: top_service.get_top_albums(db, timeframe, base_date, limit),
+    )
 
 
 @router.get("/stats", response_model=ListeningStats)
@@ -58,13 +79,37 @@ def get_listening_stats(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    return top_service.get_listening_stats(db, timeframe, base_date)
+    key = ("stats", timeframe, base_date.date().isoformat())
+    return dashboard_cache.get_or_set(
+        key,
+        dashboard_ttl(timeframe),
+        lambda: top_service.get_listening_stats(db, timeframe, base_date),
+    )
+
+
+@router.get("/timeline", response_model=TimelineResponse)
+def get_timeline(
+    timeframe: Timeframe = "all",
+    date: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    base_date = parse_date_param(date)
+    key = ("timeline", timeframe, base_date.date().isoformat())
+    return dashboard_cache.get_or_set(
+        key,
+        dashboard_ttl(timeframe),
+        lambda: top_service.get_timeline(db, timeframe, base_date),
+    )
 
 
 @router.get("/available-periods", response_model=AvailablePeriods)
 def get_available_periods(db: Session = Depends(get_db)):
     """Get available years and date range for the dataset."""
-    return top_service.get_available_periods(db)
+    return dashboard_cache.get_or_set(
+        ("available-periods",),
+        ALL_TIME_TTL_SECONDS,
+        lambda: top_service.get_available_periods(db),
+    )
 
 
 @router.get("/recently-played", response_model=RecentlyPlayedResponse)

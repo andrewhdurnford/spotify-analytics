@@ -28,6 +28,7 @@ from ..schemas import (
     TrackDetail,
     TrackDetailResponse,
 )
+from .timezone import display_timestamp, utc_naive_to_display
 from .top import get_date_range
 
 logger = logging.getLogger(__name__)
@@ -47,11 +48,13 @@ def _get_available_periods(db: Session, *filters) -> AvailablePeriods:
     row = db.execute(stmt).first()
     if not row or not row.earliest:
         return AvailablePeriods(years=[], earliest_date=None, latest_date=None)
-    years = list(range(row.earliest.year, row.latest.year + 1))
+    earliest = utc_naive_to_display(row.earliest)
+    latest = utc_naive_to_display(row.latest)
+    years = list(range(earliest.year, latest.year + 1))
     return AvailablePeriods(
         years=years,
-        earliest_date=row.earliest.isoformat(),
-        latest_date=row.latest.isoformat(),
+        earliest_date=earliest.isoformat(),
+        latest_date=latest.isoformat(),
     )
 
 
@@ -62,8 +65,9 @@ def _build_monthly_timeline_query(
     end: datetime | None,
 ):
     """Build a monthly play-count timeline query for a given filter."""
-    year_col = extract("year", Stream.played_at).label("yr")
-    month_col = extract("month", Stream.played_at).label("mo")
+    local_played_at = display_timestamp(Stream.played_at)
+    year_col = extract("year", local_played_at).label("yr")
+    month_col = extract("month", local_played_at).label("mo")
 
     stmt = select(
         year_col,
@@ -72,7 +76,7 @@ def _build_monthly_timeline_query(
     ).where(filter_col == filter_val)
 
     if start and end:
-        stmt = stmt.where(Stream.played_at.between(start, end))
+        stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
 
     return stmt.group_by(year_col, month_col).order_by(year_col, month_col)
 
@@ -84,7 +88,7 @@ def _build_daily_timeline_query(
     end: datetime | None,
 ):
     """Build a daily play-count timeline query for a given filter."""
-    date_col = func.date(Stream.played_at).label("day")
+    date_col = func.date(display_timestamp(Stream.played_at)).label("day")
 
     stmt = select(
         date_col,
@@ -92,7 +96,7 @@ def _build_daily_timeline_query(
     ).where(filter_col == filter_val)
 
     if start and end:
-        stmt = stmt.where(Stream.played_at.between(start, end))
+        stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
 
     return stmt.group_by(date_col).order_by(date_col)
 
@@ -148,7 +152,7 @@ def get_artist_detail(
     # Total play count (filtered by timeframe)
     count_stmt = select(func.count(Stream.id)).where(Stream.artist_id == artist_id)
     if start and end:
-        count_stmt = count_stmt.where(Stream.played_at.between(start, end))
+        count_stmt = count_stmt.where(Stream.played_at >= start, Stream.played_at < end)
     total_play_count = db.execute(count_stmt).scalar() or 0
 
     # Top songs for this artist
@@ -159,7 +163,7 @@ def get_artist_detail(
     ).where(Stream.artist_id == artist_id)
 
     if start and end:
-        song_counts = song_counts.where(Stream.played_at.between(start, end))
+        song_counts = song_counts.where(Stream.played_at >= start, Stream.played_at < end)
 
     song_counts = (
         song_counts.group_by("group_key").order_by(desc("play_count")).limit(limit).subquery()
@@ -217,7 +221,7 @@ def get_artist_detail(
     )
 
     if start and end:
-        album_stmt = album_stmt.where(Stream.played_at.between(start, end))
+        album_stmt = album_stmt.where(Stream.played_at >= start, Stream.played_at < end)
 
     album_query = (
         album_stmt.group_by(Stream.album_name, Stream.artist_name, Track.album_image)
@@ -298,14 +302,16 @@ def get_album_detail(
 
     count_stmt = select(func.count(Stream.id)).where(*base_filter)
     if start and end:
-        count_stmt = count_stmt.where(Stream.played_at.between(start, end))
+        count_stmt = count_stmt.where(Stream.played_at >= start, Stream.played_at < end)
     total_play_count = db.execute(count_stmt).scalar() or 0
 
     unique_tracks_stmt = select(
         func.count(func.distinct(func.coalesce(Stream.track_id, Stream.track_name)))
     ).where(*base_filter)
     if start and end:
-        unique_tracks_stmt = unique_tracks_stmt.where(Stream.played_at.between(start, end))
+        unique_tracks_stmt = unique_tracks_stmt.where(
+            Stream.played_at >= start, Stream.played_at < end
+        )
     unique_tracks_played = db.execute(unique_tracks_stmt).scalar() or 0
 
     # Top tracks on this album
@@ -315,7 +321,9 @@ def get_album_detail(
         func.count(Stream.id).label("play_count"),
     ).where(*base_filter)
     if start and end:
-        track_counts_stmt = track_counts_stmt.where(Stream.played_at.between(start, end))
+        track_counts_stmt = track_counts_stmt.where(
+            Stream.played_at >= start, Stream.played_at < end
+        )
     track_counts = (
         track_counts_stmt.group_by("group_key")
         .order_by(desc("play_count"))
@@ -364,22 +372,23 @@ def get_album_detail(
 
     # Timeline (filter on both artist_id and album_name)
     if timeframe == "month":
-        date_col = func.date(Stream.played_at).label("day")
+        date_col = func.date(display_timestamp(Stream.played_at)).label("day")
         timeline_stmt = select(date_col, func.count(Stream.id).label("play_count")).where(
             *base_filter
         )
         if start and end:
-            timeline_stmt = timeline_stmt.where(Stream.played_at.between(start, end))
+            timeline_stmt = timeline_stmt.where(Stream.played_at >= start, Stream.played_at < end)
         timeline_query = timeline_stmt.group_by(date_col).order_by(date_col)
         granularity = "daily"
     else:
-        year_col = extract("year", Stream.played_at).label("yr")
-        month_col = extract("month", Stream.played_at).label("mo")
+        local_played_at = display_timestamp(Stream.played_at)
+        year_col = extract("year", local_played_at).label("yr")
+        month_col = extract("month", local_played_at).label("mo")
         timeline_stmt = select(
             year_col, month_col, func.count(Stream.id).label("play_count")
         ).where(*base_filter)
         if start and end:
-            timeline_stmt = timeline_stmt.where(Stream.played_at.between(start, end))
+            timeline_stmt = timeline_stmt.where(Stream.played_at >= start, Stream.played_at < end)
         timeline_query = timeline_stmt.group_by(year_col, month_col).order_by(year_col, month_col)
         granularity = "monthly"
 
@@ -430,7 +439,7 @@ def get_track_detail(
     # Play count (filtered by timeframe)
     count_stmt = select(func.count(Stream.id)).where(Stream.track_id == track_id)
     if start and end:
-        count_stmt = count_stmt.where(Stream.played_at.between(start, end))
+        count_stmt = count_stmt.where(Stream.played_at >= start, Stream.played_at < end)
     total_play_count = db.execute(count_stmt).scalar() or 0
 
     # Get artist_id from streams for this track
@@ -495,7 +504,7 @@ def get_track_detail_by_name(
         Stream.artist_name == artist_name,
     )
     if start and end:
-        count_stmt = count_stmt.where(Stream.played_at.between(start, end))
+        count_stmt = count_stmt.where(Stream.played_at >= start, Stream.played_at < end)
     total_play_count = db.execute(count_stmt).scalar() or 0
 
     # Try to get album image from tracks table
@@ -520,12 +529,12 @@ def get_track_detail_by_name(
     # Listening timeline (daily for month, monthly otherwise)
     granularity = "daily" if timeframe == "month" else "monthly"
     if granularity == "daily":
-        date_col = func.date(Stream.played_at).label("day")
+        date_col = func.date(display_timestamp(Stream.played_at)).label("day")
         timeline_stmt = select(date_col, func.count(Stream.id).label("play_count")).where(
             Stream.track_name == track_name, Stream.artist_name == artist_name
         )
         if start and end:
-            timeline_stmt = timeline_stmt.where(Stream.played_at.between(start, end))
+            timeline_stmt = timeline_stmt.where(Stream.played_at >= start, Stream.played_at < end)
         timeline_query = timeline_stmt.group_by(date_col).order_by(date_col)
         timeline_results = db.execute(timeline_query).all()
         timeline = [
@@ -536,13 +545,14 @@ def get_track_detail_by_name(
             for r in timeline_results
         ]
     else:
-        year_col = extract("year", Stream.played_at).label("yr")
-        month_col = extract("month", Stream.played_at).label("mo")
+        local_played_at = display_timestamp(Stream.played_at)
+        year_col = extract("year", local_played_at).label("yr")
+        month_col = extract("month", local_played_at).label("mo")
         timeline_stmt = select(
             year_col, month_col, func.count(Stream.id).label("play_count")
         ).where(Stream.track_name == track_name, Stream.artist_name == artist_name)
         if start and end:
-            timeline_stmt = timeline_stmt.where(Stream.played_at.between(start, end))
+            timeline_stmt = timeline_stmt.where(Stream.played_at >= start, Stream.played_at < end)
         timeline_query = timeline_stmt.group_by(year_col, month_col).order_by(year_col, month_col)
         timeline_results = db.execute(timeline_query).all()
         timeline = [

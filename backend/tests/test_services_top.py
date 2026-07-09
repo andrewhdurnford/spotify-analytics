@@ -10,6 +10,7 @@ from app.services.top import (
     get_date_range,
     get_listening_stats,
     get_recently_played,
+    get_timeline,
     get_top_albums,
     get_top_artists,
     get_top_songs,
@@ -27,54 +28,54 @@ class TestGetDateRange:
 
     def test_day(self):
         start, end = get_date_range("day", datetime(2025, 3, 15, 14, 30))
-        assert start == datetime(2025, 3, 15, 0, 0, 0)
-        assert end == datetime(2025, 3, 16, 0, 0, 0)
+        assert start == datetime(2025, 3, 15, 4, 0, 0)
+        assert end == datetime(2025, 3, 16, 4, 0, 0)
 
     def test_week_monday_start(self):
         # 2025-03-12 is a Wednesday
         start, end = get_date_range("week", datetime(2025, 3, 12))
-        assert start == datetime(2025, 3, 10, 0, 0, 0)  # Monday
-        assert end == datetime(2025, 3, 17, 0, 0, 0)  # next Monday
+        assert start == datetime(2025, 3, 10, 4, 0, 0)  # Monday in Toronto
+        assert end == datetime(2025, 3, 17, 4, 0, 0)  # next Monday in Toronto
 
     def test_week_on_monday(self):
         start, end = get_date_range("week", datetime(2025, 3, 10))
-        assert start == datetime(2025, 3, 10, 0, 0, 0)
-        assert end == datetime(2025, 3, 17, 0, 0, 0)
+        assert start == datetime(2025, 3, 10, 4, 0, 0)
+        assert end == datetime(2025, 3, 17, 4, 0, 0)
 
     def test_month(self):
         start, end = get_date_range("month", datetime(2025, 1, 20))
-        assert start == datetime(2025, 1, 1, 0, 0, 0)
-        assert end == datetime(2025, 2, 1)
+        assert start == datetime(2025, 1, 1, 5, 0, 0)
+        assert end == datetime(2025, 2, 1, 5, 0, 0)
 
     def test_month_december(self):
         start, end = get_date_range("month", datetime(2025, 12, 15))
-        assert start == datetime(2025, 12, 1, 0, 0, 0)
-        assert end == datetime(2026, 1, 1)
+        assert start == datetime(2025, 12, 1, 5, 0, 0)
+        assert end == datetime(2026, 1, 1, 5, 0, 0)
 
     def test_month_february_leap_year(self):
         start, end = get_date_range("month", datetime(2024, 2, 15))
-        assert start == datetime(2024, 2, 1, 0, 0, 0)
-        assert end == datetime(2024, 3, 1)
+        assert start == datetime(2024, 2, 1, 5, 0, 0)
+        assert end == datetime(2024, 3, 1, 5, 0, 0)
 
     def test_month_february_non_leap_year(self):
         start, end = get_date_range("month", datetime(2025, 2, 10))
-        assert start == datetime(2025, 2, 1, 0, 0, 0)
-        assert end == datetime(2025, 3, 1)
+        assert start == datetime(2025, 2, 1, 5, 0, 0)
+        assert end == datetime(2025, 3, 1, 5, 0, 0)
 
     def test_quarter_q1(self):
         start, end = get_date_range("quarter", datetime(2025, 2, 15))
-        assert start == datetime(2025, 1, 1, 0, 0, 0)
-        assert end == datetime(2025, 4, 1)
+        assert start == datetime(2025, 1, 1, 5, 0, 0)
+        assert end == datetime(2025, 4, 1, 4, 0, 0)
 
     def test_quarter_q4(self):
         start, end = get_date_range("quarter", datetime(2025, 11, 1))
-        assert start == datetime(2025, 10, 1, 0, 0, 0)
-        assert end == datetime(2026, 1, 1)
+        assert start == datetime(2025, 10, 1, 4, 0, 0)
+        assert end == datetime(2026, 1, 1, 5, 0, 0)
 
     def test_year(self):
         start, end = get_date_range("year", datetime(2025, 6, 15))
-        assert start == datetime(2025, 1, 1, 0, 0, 0)
-        assert end == datetime(2025, 12, 31, 23, 59, 59)
+        assert start == datetime(2025, 1, 1, 5, 0, 0)
+        assert end == datetime(2026, 1, 1, 5, 0, 0)
 
     def test_unknown_timeframe_returns_none(self):
         start, end = get_date_range("invalid", datetime(2025, 1, 1))
@@ -253,6 +254,55 @@ class TestGetListeningStats:
         assert result.unique_artists == 0
         assert result.unique_albums == 0
         assert result.active_days == 0
+
+    def test_active_days_use_toronto_calendar_dates(self, db: Session):
+        db.add_all(
+            [
+                Stream(
+                    track_name="Late Song",
+                    artist_name="Artist",
+                    played_at=datetime(2026, 7, 9, 1, 36),
+                ),
+                Stream(
+                    track_name="Later Song",
+                    artist_name="Artist",
+                    played_at=datetime(2026, 7, 9, 2, 5),
+                ),
+            ]
+        )
+        db.commit()
+
+        result = get_listening_stats(db, "month", datetime(2026, 7, 1))
+
+        assert result.total_play_count == 2
+        assert result.active_days == 1
+
+
+class TestGetTimeline:
+    def test_late_utc_plays_are_grouped_on_previous_toronto_day(self, db: Session):
+        db.add_all(
+            [
+                Stream(
+                    track_name=f"Song {index}",
+                    artist_name="Artist",
+                    played_at=played_at,
+                )
+                for index, played_at in enumerate(
+                    [
+                        datetime(2026, 7, 9, 1, 36),
+                        datetime(2026, 7, 9, 2, 1),
+                        datetime(2026, 7, 9, 2, 5),
+                    ]
+                )
+            ]
+        )
+        db.commit()
+
+        result = get_timeline(db, "month", datetime(2026, 7, 1))
+
+        assert [point.model_dump() for point in result.timeline] == [
+            {"period": "2026-07-08", "play_count": 3},
+        ]
 
 
 class TestGetAvailablePeriods:
