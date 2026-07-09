@@ -17,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.main import app
 from app.services.dashboard_cache import dashboard_cache
+from app.services.rate_limit import reset_all_rate_limiters
 from app.services.timezone import sqlite_local_timestamp
 
 # In-memory SQLite for tests ------------------------------------------------
@@ -43,10 +44,12 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 def setup_database():
     """Create tables before each test and drop them after."""
     dashboard_cache.clear()
+    reset_all_rate_limiters()
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
     dashboard_cache.clear()
+    reset_all_rate_limiters()
 
 
 @pytest.fixture()

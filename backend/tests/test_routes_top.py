@@ -68,6 +68,38 @@ class TestSongsRoute:
         assert resp.status_code == 400
 
 
+class TestSongsRouteBounds:
+    def test_limit_above_max_returns_422(self, client, db):
+        _seed(db)
+        resp = client.get("/api/top/songs?limit=51")
+        assert resp.status_code == 422
+
+    def test_limit_at_max_is_accepted(self, client, db):
+        _seed(db)
+        resp = client.get("/api/top/songs?limit=50")
+        assert resp.status_code == 200
+
+    def test_limit_below_min_returns_422(self, client, db):
+        _seed(db)
+        resp = client.get("/api/top/songs?limit=0")
+        assert resp.status_code == 422
+
+    def test_limit_at_min_is_accepted(self, client, db):
+        _seed(db)
+        resp = client.get("/api/top/songs?limit=1")
+        assert resp.status_code == 200
+
+    def test_date_too_far_in_past_returns_400(self, client):
+        resp = client.get("/api/top/songs?date=1990-01-01")
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["error"]["code"] == "INVALID_DATE"
+
+    def test_date_far_in_future_returns_400(self, client):
+        resp = client.get("/api/top/songs?date=2999-01-01")
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["error"]["code"] == "INVALID_DATE"
+
+
 class TestArtistsRoute:
     def test_default_params(self, client, db):
         _seed(db)
@@ -206,6 +238,16 @@ class TestRecentlyPlayedRoute:
         resp = client.get("/api/top/recently-played?start_date=bad-date")
         assert resp.status_code == 400
 
+    def test_page_size_above_max_returns_422(self, client, db):
+        _seed(db)
+        resp = client.get("/api/top/recently-played?page_size=101")
+        assert resp.status_code == 422
+
+    def test_page_size_at_max_is_accepted(self, client, db):
+        _seed(db)
+        resp = client.get("/api/top/recently-played?page_size=100")
+        assert resp.status_code == 200
+
 
 class TestCurrentlyPlayingRoute:
     def test_not_playing(self, client):
@@ -248,3 +290,44 @@ class TestCurrentlyPlayingRoute:
         assert body["is_playing"] is True
         assert body["track_name"] == "Test Track"
         app.dependency_overrides.pop(get_spotify_client, None)
+
+    def test_result_is_cached_across_calls(self, client):
+        """Repeated calls within the TTL shouldn't re-hit the Spotify client."""
+        from unittest.mock import AsyncMock
+
+        from app.dependencies import get_spotify_client
+        from app.main import app
+
+        mock_client = AsyncMock()
+        mock_client.get_currently_playing.return_value = {"is_playing": False}
+
+        app.dependency_overrides[get_spotify_client] = lambda: mock_client
+        try:
+            first = client.get("/api/top/currently-playing")
+            second = client.get("/api/top/currently-playing")
+            assert first.status_code == 200
+            assert second.status_code == 200
+            mock_client.get_currently_playing.assert_called_once()
+        finally:
+            app.dependency_overrides.pop(get_spotify_client, None)
+
+    def test_cache_is_bypassed_after_clear(self, client):
+        """`dashboard_cache.clear()` (used between tests, and available for
+        manual invalidation) forces a fresh Spotify lookup.
+        """
+        from unittest.mock import AsyncMock
+
+        from app.dependencies import get_spotify_client
+        from app.main import app
+
+        mock_client = AsyncMock()
+        mock_client.get_currently_playing.return_value = {"is_playing": False}
+
+        app.dependency_overrides[get_spotify_client] = lambda: mock_client
+        try:
+            client.get("/api/top/currently-playing")
+            dashboard_cache.clear()
+            client.get("/api/top/currently-playing")
+            assert mock_client.get_currently_playing.call_count == 2
+        finally:
+            app.dependency_overrides.pop(get_spotify_client, None)
