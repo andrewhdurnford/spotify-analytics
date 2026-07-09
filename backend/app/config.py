@@ -44,6 +44,12 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_URL must include sslmode=require")
         return value
 
+    @field_validator("environment", mode="before")
+    @classmethod
+    def normalize_environment(cls, value: str) -> str:
+        """Keep production-only safeguards from failing open on casing."""
+        return value.strip().lower()
+
     @model_validator(mode="after")
     def validate_cron_secret_in_production(self) -> "Settings":
         if self.environment == "production" and not self.cron_secret.strip():

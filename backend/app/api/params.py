@@ -44,7 +44,10 @@ def parse_date_param(date: str | None, *, now: datetime | None = None) -> dateti
         return now or datetime.now()
 
     try:
-        parsed = datetime.fromisoformat(date)
+        # This API accepts calendar dates, not timestamps. Restricting the
+        # shape also avoids mixing offset-aware timestamps with our naive
+        # calendar boundaries below.
+        parsed = datetime.strptime(date, "%Y-%m-%d")
     except (ValueError, TypeError) as exc:
         raise _invalid_date(
             date,

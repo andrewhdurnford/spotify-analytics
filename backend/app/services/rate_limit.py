@@ -33,6 +33,8 @@ class RateLimiter:
             raise ValueError("max_requests must be at least 1")
         if window_seconds <= 0:
             raise ValueError("window_seconds must be positive")
+        if max_tracked_keys < 1:
+            raise ValueError("max_tracked_keys must be at least 1")
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.max_tracked_keys = max_tracked_keys

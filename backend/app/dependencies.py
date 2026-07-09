@@ -117,17 +117,12 @@ class SpotifyClient:
 
 
 def _client_key(request: Request) -> str:
-    """Best-effort per-client identity for rate limiting.
+    """Return the client identity established by the ASGI server.
 
-    Prefers the leftmost X-Forwarded-For entry (the original client, when
-    running behind a reverse proxy/load balancer), falling back to the
-    direct connection's host.
+    Proxy headers must be interpreted only by a server configured with a
+    trusted-proxy allow-list. Reading X-Forwarded-For here would let direct
+    clients mint arbitrary limiter identities.
     """
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first
     return request.client.host if request.client else "unknown"
 
 
@@ -145,7 +140,20 @@ def _enforce_rate_limit(limiter: RateLimiter, request: Request) -> None:
 
 
 def require_general_rate_limit(request: Request) -> None:
-    _enforce_rate_limit(general_limiter, request)
+    # The documented 60/minute threshold is per analytics route. Scoping the
+    # key by path also prevents the dashboard aggregator's parallel calls to
+    # six different endpoints from consuming one shared allowance.
+    key = f"{_client_key(request)}:{request.url.path}"
+    if not general_limiter.allow(key):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": "RATE_LIMITED",
+                    "message": "Too many requests. Please slow down and try again shortly.",
+                }
+            },
+        )
 
 
 def require_currently_playing_rate_limit(request: Request) -> None:

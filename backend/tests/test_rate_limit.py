@@ -100,6 +100,12 @@ class TestRateLimiterUnit:
         with pytest.raises(ValueError):
             RateLimiter(max_requests=1, window_seconds=0)
 
+    def test_rejects_non_positive_max_tracked_keys(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            RateLimiter(max_requests=1, window_seconds=60, max_tracked_keys=0)
+
 
 class TestGeneralAnalyticsRateLimit:
     def test_returns_429_after_60_requests_per_minute(self, client, db):
@@ -111,6 +117,26 @@ class TestGeneralAnalyticsRateLimit:
         blocked = client.get("/api/top/songs")
         assert blocked.status_code == 429
         assert blocked.json()["detail"]["error"]["code"] == "RATE_LIMITED"
+
+    def test_spoofed_forwarded_for_does_not_create_fresh_buckets(self, client, db):
+        _seed(db)
+        for index in range(60):
+            resp = client.get("/api/top/songs", headers={"X-Forwarded-For": f"203.0.113.{index}"})
+            assert resp.status_code == 200
+
+        blocked = client.get(
+            "/api/top/songs",
+            headers={"X-Forwarded-For": "198.51.100.250"},
+        )
+        assert blocked.status_code == 429
+
+    def test_general_budgets_are_scoped_per_route(self, client, db):
+        _seed(db)
+        for _ in range(60):
+            assert client.get("/api/top/songs").status_code == 200
+
+        assert client.get("/api/top/songs").status_code == 429
+        assert client.get("/api/top/artists").status_code == 200
 
     def test_stays_within_bounds_below_the_threshold(self, client, db):
         _seed(db)

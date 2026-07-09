@@ -207,7 +207,7 @@ class TestRequestTimeout:
         import json
 
         body = json.loads(response.body)
-        assert body["error"]["code"] == "REQUEST_TIMEOUT"
+        assert body["detail"]["error"]["code"] == "REQUEST_TIMEOUT"
 
 
 class TestTrustedHostMiddlewareWiring:

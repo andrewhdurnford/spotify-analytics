@@ -112,9 +112,11 @@ async def _run_with_timeout(call_next_coro, timeout_seconds: float):
         return JSONResponse(
             status_code=504,
             content={
-                "error": {
-                    "code": "REQUEST_TIMEOUT",
-                    "message": "The request took too long to process.",
+                "detail": {
+                    "error": {
+                        "code": "REQUEST_TIMEOUT",
+                        "message": "The request took too long to process.",
+                    }
                 }
             },
         )

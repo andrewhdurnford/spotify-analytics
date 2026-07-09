@@ -25,6 +25,12 @@ class TestParseDateParam:
         assert exc_info.value.status_code == 400
         assert exc_info.value.detail["error"]["code"] == "INVALID_DATE"
 
+    def test_timezone_aware_timestamp_is_rejected_with_400(self):
+        with pytest.raises(HTTPException) as exc_info:
+            parse_date_param("2025-01-15T00:00:00+00:00", now=FIXED_NOW)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["error"]["code"] == "INVALID_DATE"
+
     def test_date_before_min_allowed_raises_400(self):
         with pytest.raises(HTTPException) as exc_info:
             parse_date_param("1999-12-31", now=FIXED_NOW)

@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
@@ -24,7 +26,7 @@ from ..params import (
 router = APIRouter()
 
 
-def _spotify_id_path() -> str:
+def _spotify_id_path() -> Any:
     """A fresh Path(...) bound per parameter -- FastAPI mutates the FieldInfo
     it's given to bind it to a specific parameter name, so a single shared
     instance can't be reused across different path parameters.

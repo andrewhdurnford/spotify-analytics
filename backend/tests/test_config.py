@@ -23,6 +23,10 @@ class TestCronSecretProductionRequirement:
         )
         assert settings.cron_secret == "real-secret"
 
+    def test_environment_is_normalized_before_production_validation(self):
+        with pytest.raises(ValidationError):
+            Settings(database_url=VALID_DB_URL, environment=" Production ", cron_secret="")
+
     def test_development_with_empty_cron_secret_succeeds(self):
         settings = Settings(database_url=VALID_DB_URL, environment="development", cron_secret="")
         assert settings.cron_secret == ""

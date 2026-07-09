@@ -148,7 +148,7 @@ def get_available_periods(db: Session = Depends(get_db)):
 )
 def get_recently_played(
     start_date: str = Query(None),
-    page: int = Query(1, ge=1, le=100_000),
+    page: int = Query(1, ge=1, le=1_000),
     page_size: int = Query(100, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
