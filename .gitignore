@@ -33,9 +33,14 @@ backend/.git/
 
 # IDE / tooling
 .opencode/
+.claude/
 AGENTS.md
 .idea/
 .vscode/
 *.swp
 *.swo
 .DS_Store
+
+# Local planning notes
+planning/
+*.local.md
