@@ -9,9 +9,21 @@ from ...schemas import (
     TrackDetailResponse,
 )
 from ...services import detail as detail_service
+from ...services.dashboard_cache import (
+    DETAIL_TTL_SECONDS,
+    RELATED_TRACKS_TTL_SECONDS,
+    dashboard_cache,
+    dashboard_ttl,
+)
 from ..params import Timeframe, parse_date_param
 
 router = APIRouter()
+
+
+def detail_ttl(timeframe: str) -> int:
+    if timeframe == "all":
+        return DETAIL_TTL_SECONDS
+    return dashboard_ttl(timeframe)
 
 
 @router.get("/artists/{artist_id}", response_model=ArtistDetailResponse)
@@ -24,7 +36,19 @@ def get_artist_detail(
 ):
     """Get detailed information for a single artist."""
     base_date = parse_date_param(date)
-    result = detail_service.get_artist_detail(db, artist_id, timeframe, base_date, limit)
+    key = ("artist-detail", artist_id, timeframe, base_date.date().isoformat(), limit)
+    result = dashboard_cache.get_or_set(
+        key,
+        detail_ttl(timeframe),
+        lambda: detail_service.get_artist_detail(
+            db,
+            artist_id,
+            timeframe,
+            base_date,
+            limit,
+        ),
+        cache_none=False,
+    )
     if not result:
         raise HTTPException(
             status_code=404,
@@ -49,8 +73,21 @@ def get_album_detail_by_name(
 ):
     """Get detailed information for an album, keyed by (artist_id, album_name)."""
     base_date = parse_date_param(date)
-    result = detail_service.get_album_detail(
-        db, artist_id, album_name, timeframe, base_date, limit
+    key = (
+        "album-detail",
+        artist_id,
+        album_name,
+        timeframe,
+        base_date.date().isoformat(),
+        limit,
+    )
+    result = dashboard_cache.get_or_set(
+        key,
+        detail_ttl(timeframe),
+        lambda: detail_service.get_album_detail(
+            db, artist_id, album_name, timeframe, base_date, limit
+        ),
+        cache_none=False,
     )
     if not result:
         raise HTTPException(
@@ -75,8 +112,20 @@ def get_track_detail_by_name(
 ):
     """Get detailed information for a track by name + artist (fallback for tracks without Spotify ID)."""
     base_date = parse_date_param(date)
-    result = detail_service.get_track_detail_by_name(
-        db, track_name, artist_name, timeframe, base_date
+    key = (
+        "track-detail-by-name",
+        track_name,
+        artist_name,
+        timeframe,
+        base_date.date().isoformat(),
+    )
+    result = dashboard_cache.get_or_set(
+        key,
+        detail_ttl(timeframe),
+        lambda: detail_service.get_track_detail_by_name(
+            db, track_name, artist_name, timeframe, base_date
+        ),
+        cache_none=False,
     )
     if not result:
         raise HTTPException(
@@ -100,7 +149,13 @@ def get_track_detail(
 ):
     """Get detailed information for a single track."""
     base_date = parse_date_param(date)
-    result = detail_service.get_track_detail(db, track_id, timeframe, base_date)
+    key = ("track-detail", track_id, timeframe, base_date.date().isoformat())
+    result = dashboard_cache.get_or_set(
+        key,
+        detail_ttl(timeframe),
+        lambda: detail_service.get_track_detail(db, track_id, timeframe, base_date),
+        cache_none=False,
+    )
     if not result:
         raise HTTPException(
             status_code=404,
@@ -127,7 +182,13 @@ def get_related_tracks(
     cosine similarity over session-membership and require at least 3
     co-occurring sessions to surface.
     """
-    result = detail_service.get_related_tracks(db, track_id, limit=limit)
+    key = ("related-tracks", track_id, limit)
+    result = dashboard_cache.get_or_set(
+        key,
+        RELATED_TRACKS_TTL_SECONDS,
+        lambda: detail_service.get_related_tracks(db, track_id, limit=limit),
+        cache_none=False,
+    )
     if result is None:
         raise HTTPException(
             status_code=404,

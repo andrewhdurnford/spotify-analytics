@@ -16,6 +16,7 @@ from ...schemas import (
 from ...services import top as top_service
 from ...services.dashboard_cache import (
     ALL_TIME_TTL_SECONDS,
+    RECENTLY_PLAYED_TTL_SECONDS,
     dashboard_cache,
     dashboard_ttl,
 )
@@ -120,7 +121,17 @@ def get_recently_played(
     db: Session = Depends(get_db),
 ):
     parsed_start_date = parse_date_param(start_date) if start_date else None
-    return top_service.get_recently_played(db, parsed_start_date, page, page_size)
+    key = (
+        "recently-played",
+        parsed_start_date.date().isoformat() if parsed_start_date else None,
+        page,
+        page_size,
+    )
+    return dashboard_cache.get_or_set(
+        key,
+        RECENTLY_PLAYED_TTL_SECONDS,
+        lambda: top_service.get_recently_played(db, parsed_start_date, page, page_size),
+    )
 
 
 @router.get("/currently-playing", response_model=CurrentlyPlaying)
@@ -129,5 +140,9 @@ async def get_currently_playing(
 ):
     currently_playing = await spotify_service.get_currently_playing()
     if currently_playing:
-        return currently_playing if isinstance(currently_playing, dict) else currently_playing.model_dump()
+        return (
+            currently_playing
+            if isinstance(currently_playing, dict)
+            else currently_playing.model_dump()
+        )
     return {"is_playing": False}

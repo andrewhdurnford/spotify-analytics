@@ -33,5 +33,19 @@ def test_clear_invalidates_cached_values():
     assert cache.get_or_set("songs", 60, load) == 2
 
 
+def test_can_skip_caching_none_values():
+    cache = DashboardCache()
+    calls = 0
+
+    def load():
+        nonlocal calls
+        calls += 1
+        return None
+
+    assert cache.get_or_set("missing", 60, load, cache_none=False) is None
+    assert cache.get_or_set("missing", 60, load, cache_none=False) is None
+    assert calls == 2
+
+
 def test_all_time_results_have_longer_ttl():
     assert dashboard_ttl("all") > dashboard_ttl("month")

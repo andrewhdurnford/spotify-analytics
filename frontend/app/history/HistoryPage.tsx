@@ -25,10 +25,14 @@ export default function HistoryPage({ initialData }: HistoryPageProps) {
     }
     return `/api/top/recently-played?${params.toString()}`;
   }, [page, startDate]);
+  const initialKey = '/api/top/recently-played?page=1&page_size=100';
+  const isInitialKey = swrKey === initialKey;
 
   const { data, error, isLoading } = useSWR<RecentlyPlayedResponse>(swrKey, fetcher, {
-    fallbackData: initialData,
+    fallbackData: isInitialKey ? initialData : undefined,
     keepPreviousData: true,
+    revalidateIfStale: !isInitialKey,
+    revalidateOnFocus: false,
   });
 
   const history = data ?? initialData;
