@@ -17,6 +17,7 @@ from ...services import top as top_service
 from ...services.dashboard_cache import (
     ALL_TIME_TTL_SECONDS,
     RECENTLY_PLAYED_TTL_SECONDS,
+    cache_window_key,
     dashboard_cache,
     dashboard_ttl,
 )
@@ -29,11 +30,11 @@ router = APIRouter()
 def get_top_songs(
     timeframe: Timeframe = "all",
     date: str = Query(None),
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    key = ("songs", timeframe, base_date.date().isoformat(), limit)
+    key = ("songs", timeframe, cache_window_key(timeframe, base_date, date), limit)
     return dashboard_cache.get_or_set(
         key,
         dashboard_ttl(timeframe),
@@ -45,11 +46,11 @@ def get_top_songs(
 def get_top_artists(
     timeframe: Timeframe = "all",
     date: str = Query(None),
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    key = ("artists", timeframe, base_date.date().isoformat(), limit)
+    key = ("artists", timeframe, cache_window_key(timeframe, base_date, date), limit)
     return dashboard_cache.get_or_set(
         key,
         dashboard_ttl(timeframe),
@@ -61,11 +62,11 @@ def get_top_artists(
 def get_top_albums(
     timeframe: Timeframe = "all",
     date: str = Query(None),
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    key = ("albums", timeframe, base_date.date().isoformat(), limit)
+    key = ("albums", timeframe, cache_window_key(timeframe, base_date, date), limit)
     return dashboard_cache.get_or_set(
         key,
         dashboard_ttl(timeframe),
@@ -80,7 +81,7 @@ def get_listening_stats(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    key = ("stats", timeframe, base_date.date().isoformat())
+    key = ("stats", timeframe, cache_window_key(timeframe, base_date, date))
     return dashboard_cache.get_or_set(
         key,
         dashboard_ttl(timeframe),
@@ -95,7 +96,7 @@ def get_timeline(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    key = ("timeline", timeframe, base_date.date().isoformat())
+    key = ("timeline", timeframe, cache_window_key(timeframe, base_date, date))
     return dashboard_cache.get_or_set(
         key,
         dashboard_ttl(timeframe),
@@ -123,7 +124,7 @@ def get_recently_played(
     parsed_start_date = parse_date_param(start_date) if start_date else None
     key = (
         "recently-played",
-        parsed_start_date.date().isoformat() if parsed_start_date else None,
+        parsed_start_date.isoformat() if parsed_start_date else None,
         page,
         page_size,
     )

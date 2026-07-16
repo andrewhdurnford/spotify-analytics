@@ -10,20 +10,14 @@ from ...schemas import (
 )
 from ...services import detail as detail_service
 from ...services.dashboard_cache import (
-    DETAIL_TTL_SECONDS,
     RELATED_TRACKS_TTL_SECONDS,
+    cache_window_key,
     dashboard_cache,
-    dashboard_ttl,
+    detail_ttl,
 )
 from ..params import Timeframe, parse_date_param
 
 router = APIRouter()
-
-
-def detail_ttl(timeframe: str) -> int:
-    if timeframe == "all":
-        return DETAIL_TTL_SECONDS
-    return dashboard_ttl(timeframe)
 
 
 @router.get("/artists/{artist_id}", response_model=ArtistDetailResponse)
@@ -31,12 +25,18 @@ def get_artist_detail(
     artist_id: str,
     timeframe: Timeframe = "all",
     date: str = Query(None),
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
     """Get detailed information for a single artist."""
     base_date = parse_date_param(date)
-    key = ("artist-detail", artist_id, timeframe, base_date.date().isoformat(), limit)
+    key = (
+        "artist-detail",
+        artist_id,
+        timeframe,
+        cache_window_key(timeframe, base_date, date),
+        limit,
+    )
     result = dashboard_cache.get_or_set(
         key,
         detail_ttl(timeframe),
@@ -68,7 +68,7 @@ def get_album_detail_by_name(
     album_name: str = Query(...),
     timeframe: Timeframe = "all",
     date: str = Query(None),
-    limit: int = 25,
+    limit: int = Query(25, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
     """Get detailed information for an album, keyed by (artist_id, album_name)."""
@@ -78,7 +78,7 @@ def get_album_detail_by_name(
         artist_id,
         album_name,
         timeframe,
-        base_date.date().isoformat(),
+        cache_window_key(timeframe, base_date, date),
         limit,
     )
     result = dashboard_cache.get_or_set(
@@ -117,7 +117,7 @@ def get_track_detail_by_name(
         track_name,
         artist_name,
         timeframe,
-        base_date.date().isoformat(),
+        cache_window_key(timeframe, base_date, date),
     )
     result = dashboard_cache.get_or_set(
         key,
@@ -149,7 +149,12 @@ def get_track_detail(
 ):
     """Get detailed information for a single track."""
     base_date = parse_date_param(date)
-    key = ("track-detail", track_id, timeframe, base_date.date().isoformat())
+    key = (
+        "track-detail",
+        track_id,
+        timeframe,
+        cache_window_key(timeframe, base_date, date),
+    )
     result = dashboard_cache.get_or_set(
         key,
         detail_ttl(timeframe),

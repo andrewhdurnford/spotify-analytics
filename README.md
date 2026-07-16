@@ -75,6 +75,15 @@ SYNC_MAX_WAIT_SECONDS=25
 
 The local loop uses the same completion-aware sync as the cron endpoint.
 
+## Backend Response Cache
+
+Dashboard, detail, related-track, and history reads use a bounded in-process
+TTL cache to reduce repeated database egress. The local playback sync loop
+clears the cache after recording a completed play in that backend process.
+Historical import scripts and multi-worker deployments do not share
+in-process invalidation, so those writes become visible after the endpoint TTL
+expires.
+
 ## Frontend Environment
 
 For local frontend development, create `frontend/.env.local`:
