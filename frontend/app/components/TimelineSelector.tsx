@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import Dropdown from '@/app/components/Dropdown';
 
 const MONTHS = [
@@ -55,6 +55,15 @@ export default function TimelineSelector({
   const displayYear = parsedDate.year;
   const displayMonth = parsedDate.month;
 
+  // Remember the last month selected in month view so switching away
+  // (e.g. to year) and back restores it instead of defaulting to January.
+  const lastMonthRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (timeframe === 'month' && displayMonth !== null) {
+      lastMonthRef.current = displayMonth;
+    }
+  }, [timeframe, displayMonth]);
+
   const filteredMonths = useMemo(() => {
     if (!displayYear) return MONTHS;
 
@@ -85,7 +94,7 @@ export default function TimelineSelector({
     }
 
     const year = displayYear ?? (availableYears.length > 0 ? availableYears[availableYears.length - 1] : new Date().getFullYear());
-    const month = newTimeframe === 'month' ? (displayMonth ?? 0) : 0;
+    const month = newTimeframe === 'month' ? (lastMonthRef.current ?? displayMonth ?? 0) : 0;
     onTimeframeChange(newTimeframe, formatDate(year, month));
   };
 
