@@ -63,39 +63,43 @@ export default function Dashboard({
     data: songs,
     error: songsError,
     isLoading: songsLoading,
-  } = useSWR<Song[]>(`/api/top/songs?${params}`, fetcher);
+  } = useSWR<Song[]>(`/api/top/songs?${params}`, fetcher, { revalidateOnFocus: false });
 
   const {
     data: artists,
     error: artistsError,
     isLoading: artistsLoading,
-  } = useSWR<Artist[]>(`/api/top/artists?${params}`, fetcher);
+  } = useSWR<Artist[]>(`/api/top/artists?${params}`, fetcher, { revalidateOnFocus: false });
 
   const {
     data: albums,
     error: albumsError,
     isLoading: albumsLoading,
-  } = useSWR<Album[]>(`/api/top/albums?${params}`, fetcher);
+  } = useSWR<Album[]>(`/api/top/albums?${params}`, fetcher, { revalidateOnFocus: false });
 
   const {
     data: stats,
     error: statsError,
     isLoading: statsLoading,
-  } = useSWR<ListeningStatsData>(`/api/top/stats?${params}`, fetcher);
+  } = useSWR<ListeningStatsData>(`/api/top/stats?${params}`, fetcher, { revalidateOnFocus: false });
 
   const {
     data: recentlyPlayed,
     error: recentlyPlayedError,
     isLoading: recentlyPlayedLoading,
   } = useSWR<RecentlyPlayedResponse>('/api/top/recently-played?page=1&page_size=10', fetcher, {
-    refreshInterval: 60_000,
+    refreshInterval: 5 * 60_000,
+    revalidateOnFocus: false,
   });
 
-  const { data: periods } = useSWR<AvailablePeriods>('/api/top/available-periods', fetcher);
+  const { data: periods } = useSWR<AvailablePeriods>('/api/top/available-periods', fetcher, {
+    revalidateOnFocus: false,
+  });
 
   const { data: timelineData } = useSWR<TimelineResponse>(
     `/api/top/timeline?${params}`,
     fetcher,
+    { revalidateOnFocus: false },
   );
 
   const timeline = timelineData?.timeline ?? [];

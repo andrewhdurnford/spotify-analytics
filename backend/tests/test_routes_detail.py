@@ -115,6 +115,11 @@ class TestArtistDetailRoute:
         assert resp.status_code == 400
         assert resp.json()["detail"]["error"]["code"] == "INVALID_DATE"
 
+    def test_artist_detail_rejects_unbounded_limit(self, client):
+        resp = client.get("/api/artists/a1?limit=500")
+
+        assert resp.status_code == 422
+
 
 class TestTrackDetailRoute:
     def test_track_detail_by_id(self, client, db):
@@ -175,3 +180,13 @@ class TestTrackDetailRoute:
 
         assert resp.status_code == 404
         assert resp.json()["detail"]["error"]["code"] == "TRACK_NOT_FOUND"
+
+
+class TestAlbumDetailRoute:
+    def test_album_detail_rejects_unbounded_limit(self, client):
+        resp = client.get(
+            "/api/albums/by-name",
+            params={"artist_id": "a1", "album_name": "Alb 1", "limit": 500},
+        )
+
+        assert resp.status_code == 422
