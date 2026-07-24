@@ -1,8 +1,10 @@
 from datetime import datetime
 
+import pytest
 from sqlalchemy import select
 
 from app.models import Artist, DailyListeningStats, DailyTrackStats, Stream, Track
+from app.services import rollups, spotify_metadata
 from app.services.spotify_metadata import (
     get_missing_artist_ids,
     get_missing_track_ids,
@@ -242,3 +244,93 @@ def test_upsert_batch_failure_rolls_back_and_reports_warning(db):
     assert issues[0].operation == "spotify_track_metadata"
     assert issues[0].identifiers == ("track-1",)
     assert db.execute(select(Track)).scalars().all() == []
+
+
+def test_upsert_tracks_scopes_rollup_recompute_to_enriched_tracks(db, monkeypatch):
+    """Enrichment must not pay for a full-history rebuild.
+
+    Only streams pointing at the enriched tracks can change their rollup
+    contribution, so the recompute is scoped to those track ids.
+    """
+    db.add(
+        Stream(
+            track_name="Song",
+            artist_name="Artist",
+            played_at=datetime(2025, 1, 10, 12, 0),
+            track_id="track-1",
+        )
+    )
+    db.commit()
+
+    calls = []
+
+    def fake_scoped(session, track_ids):
+        calls.append(list(track_ids))
+        return rollups.RollupRebuildStats(daily_rows=0, track_rows=0, streams_processed=0)
+
+    monkeypatch.setattr(spotify_metadata, "rebuild_rollups_for_tracks", fake_scoped)
+
+    def fake_get(url, *, params, headers, timeout):
+        return FakeResponse(
+            {
+                "tracks": [
+                    {
+                        "id": "track-1",
+                        "name": "Song",
+                        "artists": [{"id": "artist-1", "name": "Artist"}],
+                        "album": {"name": "Album", "images": []},
+                        "duration_ms": 123000,
+                        "popularity": 77,
+                    }
+                ]
+            }
+        )
+
+    upsert_tracks_from_spotify(db, "token", ["track-1"], http_get=fake_get)
+
+    assert calls == [["track-1"]]
+
+
+def test_upsert_tracks_reports_stale_rollups_when_recompute_fails(db, monkeypatch):
+    """Track/Stream writes are already committed per batch, so a failed
+    recompute leaves metadata fresh and rollups stale. The error has to say so.
+    """
+    db.add(
+        Stream(
+            track_name="Song",
+            artist_name="Artist",
+            played_at=datetime(2025, 1, 10, 12, 0),
+            track_id="track-1",
+        )
+    )
+    db.commit()
+
+    def boom(session, track_ids):
+        raise RuntimeError("rollup boom")
+
+    monkeypatch.setattr(spotify_metadata, "rebuild_rollups_for_tracks", boom)
+
+    def fake_get(url, *, params, headers, timeout):
+        return FakeResponse(
+            {
+                "tracks": [
+                    {
+                        "id": "track-1",
+                        "name": "Song",
+                        "artists": [{"id": "artist-1", "name": "Artist"}],
+                        "album": {"name": "Album", "images": []},
+                        "duration_ms": 123000,
+                        "popularity": 77,
+                    }
+                ]
+            }
+        )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        upsert_tracks_from_spotify(db, "token", ["track-1"], http_get=fake_get)
+
+    assert "backfill_rollups" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    # The metadata writes stay committed — the message is what tells the
+    # operator to repair the rollups.
+    assert db.execute(select(Track).where(Track.spotify_id == "track-1")).scalar_one()

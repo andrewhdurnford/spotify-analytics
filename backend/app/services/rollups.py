@@ -26,9 +26,18 @@ The `before_flush` session event that drives the incremental path is
 registered in `app.models` (imported by every DB-touching module, so
 registration is guaranteed regardless of call site) via a deferred import of
 `apply_stream_to_rollups` to avoid a models<->services import cycle.
+
+Caveat: the incremental path only handles `Stream` *inserts*. Deleting a
+`Stream`, or updating one's `played_at`/`track_id`/`artist_id`/`album_name`,
+leaves the rollups describing the old state. `app.models` logs a loud warning
+when it sees such a flush, but the only correct repair is to rerun
+`rebuild_all_rollups` (`python -m app.scripts.backfill_rollups --commit`)
+afterwards. `spotify_metadata.upsert_tracks_from_spotify` is the one covered
+mutation path: it calls `rebuild_rollups_for_tracks` itself.
 """
 
 from collections import defaultdict
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date as date_type
 
@@ -39,6 +48,10 @@ from ..models import DailyListeningStats, DailyTrackStats, Stream, Track
 from .timezone import utc_naive_to_display
 
 NO_ALBUM_SENTINEL = ""
+# Server-side batch size for streaming `streams` during a rebuild.
+_STREAM_FETCH_SIZE = 1000
+# Chunk size for `IN (...)` predicates built from caller-supplied id lists.
+_ID_CHUNK_SIZE = 500
 # Serializes incremental rollup maintenance and full rebuilds in PostgreSQL.
 # Keep this value in sync with the Alembic migration's backfill lock.
 ROLLUP_ADVISORY_LOCK_ID = 7_315_902_024
@@ -59,6 +72,17 @@ def artist_key_for(artist_id: str | None, artist_name: str) -> str:
 
 def album_key_for(album_name: str | None) -> str:
     return album_name if album_name else NO_ALBUM_SENTINEL
+
+
+def optional_text(value: str | None) -> str | None:
+    """Normalize an empty string to NULL for nullable display/filter columns.
+
+    `streams` carries both `NULL` and `''` for "unknown" ids/album; the rollup
+    tables store a single representation so that the incremental path, the
+    bulk rebuild, and the migration's `max(nullif(col, ''))` backfill all
+    produce identical rows.
+    """
+    return value or None
 
 
 @dataclass(frozen=True)
@@ -155,11 +179,11 @@ def _get_or_create_track_row(
     if cache_key in cache:
         track_row = cache[cache_key]
         # Last-seen-wins for display/filter columns within the batch too.
-        track_row.track_id = track_row.track_id or stream.track_id
-        track_row.artist_id = track_row.artist_id or stream.artist_id
+        track_row.track_id = optional_text(track_row.track_id or stream.track_id)
+        track_row.artist_id = optional_text(track_row.artist_id or stream.artist_id)
         track_row.track_name = stream.track_name
         track_row.artist_name = stream.artist_name
-        track_row.album_name = track_row.album_name or stream.album_name
+        track_row.album_name = optional_text(track_row.album_name or stream.album_name)
         return track_row
 
     with session.no_autoflush:
@@ -177,11 +201,11 @@ def _get_or_create_track_row(
             track_key=keys.track_key,
             artist_key=keys.artist_key,
             album_key=keys.album_key,
-            track_id=stream.track_id,
-            artist_id=stream.artist_id,
+            track_id=optional_text(stream.track_id),
+            artist_id=optional_text(stream.artist_id),
             track_name=stream.track_name,
             artist_name=stream.artist_name,
-            album_name=stream.album_name,
+            album_name=optional_text(stream.album_name),
             play_count=0,
             listening_ms=0,
         )
@@ -189,11 +213,11 @@ def _get_or_create_track_row(
     else:
         # Last-seen-wins for display/filter columns, in case metadata was
         # missing on an earlier play and is now populated.
-        track_row.track_id = track_row.track_id or stream.track_id
-        track_row.artist_id = track_row.artist_id or stream.artist_id
+        track_row.track_id = optional_text(track_row.track_id or stream.track_id)
+        track_row.artist_id = optional_text(track_row.artist_id or stream.artist_id)
         track_row.track_name = stream.track_name
         track_row.artist_name = stream.artist_name
-        track_row.album_name = track_row.album_name or stream.album_name
+        track_row.album_name = optional_text(track_row.album_name or stream.album_name)
     cache[cache_key] = track_row
     return track_row
 
@@ -293,25 +317,20 @@ def _iter_stream_rollup_inputs() -> Select:
     )
 
 
-def rebuild_all_rollups(session: Session) -> RollupRebuildStats:
-    """Deterministically rebuild both rollup tables from `streams`.
+def _accumulate_rollups(
+    session: Session,
+    stmt: Select,
+    daily_totals: dict[date_type, list[int]],
+    track_totals: dict[tuple, dict],
+) -> int:
+    """Fold every row of `stmt` into the given accumulators; return row count.
 
-    Wholesale delete + recompute, in one transaction (caller commits). Uses
-    the same key-derivation helpers as the incremental path so the two can
-    never disagree on grouping. Idempotent: rerunning against unchanged
-    `streams` data produces byte-identical rollup rows.
+    Streams the result (`yield_per`) instead of materializing every `Stream`
+    row in memory — the rollups themselves are the only thing that has to fit.
     """
-    # Block incremental writers before taking the Stream snapshot and hold
-    # the lock through the caller's commit. Otherwise a concurrent increment
-    # could be erased by the delete/reinsert phase below.
-    _acquire_rollup_write_lock(session)
-
-    daily_totals: dict[date_type, list[int]] = defaultdict(lambda: [0, 0])  # [play_count, ms]
-    track_totals: dict[tuple, dict] = {}
-
     streams_processed = 0
-    rows = session.execute(_iter_stream_rollup_inputs()).all()
-    for row in rows:
+    result = session.execute(stmt.execution_options(yield_per=_STREAM_FETCH_SIZE))
+    for row in result:
         streams_processed += 1
         played_at, track_id, artist_id, track_name, artist_name, album_name, duration_ms = row
         duration_ms = duration_ms or 0
@@ -333,23 +352,49 @@ def rebuild_all_rollups(session: Session) -> RollupRebuildStats:
                 "track_key": tk,
                 "artist_key": ak,
                 "album_key": albk,
-                "track_id": track_id,
-                "artist_id": artist_id,
+                "track_id": optional_text(track_id),
+                "artist_id": optional_text(artist_id),
                 "track_name": track_name,
                 "artist_name": artist_name,
-                "album_name": album_name,
+                "album_name": optional_text(album_name),
                 "play_count": 0,
                 "listening_ms": 0,
             }
             track_totals[key] = entry
         else:
-            entry["track_id"] = entry["track_id"] or track_id
-            entry["artist_id"] = entry["artist_id"] or artist_id
+            entry["track_id"] = optional_text(entry["track_id"] or track_id)
+            entry["artist_id"] = optional_text(entry["artist_id"] or artist_id)
             entry["track_name"] = track_name
             entry["artist_name"] = artist_name
-            entry["album_name"] = entry["album_name"] or album_name
+            entry["album_name"] = optional_text(entry["album_name"] or album_name)
         entry["play_count"] += 1
         entry["listening_ms"] += duration_ms
+
+    return streams_processed
+
+
+def rebuild_all_rollups(session: Session) -> RollupRebuildStats:
+    """Deterministically rebuild both rollup tables from `streams`.
+
+    Wholesale delete + recompute, in one transaction (caller commits). Uses
+    the same key-derivation helpers as the incremental path so the two can
+    never disagree on grouping. Idempotent: rerunning against unchanged
+    `streams` data produces byte-identical rollup rows.
+
+    This is also the repair path for the mutations the incremental hook does
+    not cover (Stream deletes/updates) — see the module docstring.
+    """
+    # Block incremental writers before taking the Stream snapshot and hold
+    # the lock through the caller's commit. Otherwise a concurrent increment
+    # could be erased by the delete/reinsert phase below.
+    _acquire_rollup_write_lock(session)
+
+    daily_totals: dict[date_type, list[int]] = defaultdict(lambda: [0, 0])  # [play_count, ms]
+    track_totals: dict[tuple, dict] = {}
+
+    streams_processed = _accumulate_rollups(
+        session, _iter_stream_rollup_inputs(), daily_totals, track_totals
+    )
 
     session.execute(delete(DailyTrackStats))
     session.execute(delete(DailyListeningStats))
@@ -364,6 +409,94 @@ def rebuild_all_rollups(session: Session) -> RollupRebuildStats:
 
     return RollupRebuildStats(
         daily_rows=len(daily_totals),
+        track_rows=len(track_totals),
+        streams_processed=streams_processed,
+    )
+
+
+def _chunked(values: Sequence[str], size: int = _ID_CHUNK_SIZE) -> Iterator[Sequence[str]]:
+    for start in range(0, len(values), size):
+        yield values[start : start + size]
+
+
+def rebuild_rollups_for_tracks(session: Session, track_ids: Sequence[str]) -> RollupRebuildStats:
+    """Recompute rollups for just the plays of `track_ids`.
+
+    Scoped counterpart to `rebuild_all_rollups` for the metadata-enrichment
+    path, where only streams pointing at the enriched tracks can change:
+    `Track.duration_ms` feeds `listening_ms`, and a newly resolved
+    `Stream.artist_id` changes `artist_key`. Enrichment never adds or removes
+    plays, so `daily_listening_stats.play_count` is left alone and only the
+    per-date `listening_ms` delta is applied.
+
+    Every stream with a non-empty `track_id` rolls up under
+    `track_key == track_id` (see `track_key_for`), so the affected
+    `daily_track_stats` rows are exactly those with `track_key IN track_ids`.
+
+    Assumes the rollups are otherwise in sync (the migration backfill plus the
+    `before_flush` hook guarantee that); `rebuild_all_rollups` is the recovery
+    path if they are not. `streams_processed` counts only the scanned streams.
+    """
+    ids = sorted({track_id for track_id in track_ids if track_id})
+    if not ids:
+        return RollupRebuildStats(daily_rows=0, track_rows=0, streams_processed=0)
+
+    # Same lock as the full rebuild and the incremental path: held through the
+    # caller's commit so a concurrent Stream insert can't be erased below.
+    _acquire_rollup_write_lock(session)
+
+    daily_totals: dict[date_type, list[int]] = defaultdict(lambda: [0, 0])  # [play_count, ms]
+    track_totals: dict[tuple, dict] = {}
+    old_ms_by_date: dict[date_type, int] = defaultdict(int)
+    streams_processed = 0
+
+    for chunk in _chunked(ids):
+        # listening_ms these tracks currently contribute, per date, before the
+        # rows are dropped and recomputed.
+        for date_, total in session.execute(
+            select(DailyTrackStats.date, func.sum(DailyTrackStats.listening_ms))
+            .where(DailyTrackStats.track_key.in_(chunk))
+            .group_by(DailyTrackStats.date)
+        ):
+            old_ms_by_date[date_] += total or 0
+        session.execute(
+            delete(DailyTrackStats).where(DailyTrackStats.track_key.in_(chunk)),
+            execution_options={"synchronize_session": False},
+        )
+        streams_processed += _accumulate_rollups(
+            session,
+            _iter_stream_rollup_inputs().where(Stream.track_id.in_(chunk)),
+            daily_totals,
+            track_totals,
+        )
+
+    if track_totals:
+        session.add_all(DailyTrackStats(**entry) for entry in track_totals.values())
+
+    # Apply the net listening_ms change to the per-date totals. Dates that
+    # only lost contributions (all plays regrouped away) still need the
+    # subtraction, hence the union of old and new dates.
+    affected_dates = set(old_ms_by_date) | set(daily_totals)
+    for date_ in affected_dates:
+        new_ms = daily_totals[date_][1] if date_ in daily_totals else 0
+        delta = new_ms - old_ms_by_date[date_]
+        daily = session.execute(
+            select(DailyListeningStats).where(DailyListeningStats.date == date_)
+        ).scalar_one_or_none()
+        if daily is None:
+            # No rollup row for a date that has plays — rollups were not in
+            # sync to begin with. Seed what this scope knows; a full rebuild
+            # is the real fix.
+            daily = DailyListeningStats(
+                date=date_,
+                play_count=daily_totals[date_][0] if date_ in daily_totals else 0,
+                listening_ms=0,
+            )
+            session.add(daily)
+        daily.listening_ms += delta
+
+    return RollupRebuildStats(
+        daily_rows=len(affected_dates),
         track_rows=len(track_totals),
         streams_processed=streams_processed,
     )

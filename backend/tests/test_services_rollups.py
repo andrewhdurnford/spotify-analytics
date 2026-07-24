@@ -2,21 +2,27 @@
 
 Covers: incremental maintenance (via the before_flush hook, exercised simply
 by adding Stream rows), deterministic bulk backfill from existing streams,
+the scoped rebuild used after metadata enrichment, '' vs NULL normalization
+of display columns, warnings for Stream mutations the hook cannot track,
 idempotent reruns, timezone boundaries, partial-day data, and empty ranges.
 """
 
+import logging
 from datetime import date, datetime
 
-from sqlalchemy import event, select
+from sqlalchemy import event, select, update
 from sqlalchemy.orm import Session
 
 from app.models import Artist, DailyListeningStats, DailyTrackStats, Stream, Track
 from app.services.rollups import (
     NO_ALBUM_SENTINEL,
+    RollupRebuildStats,
     album_key_for,
     artist_key_for,
     local_date_for,
+    optional_text,
     rebuild_all_rollups,
+    rebuild_rollups_for_tracks,
     track_key_for,
 )
 
@@ -380,3 +386,251 @@ class TestRebuildAllRollups:
 
         assert stats.daily_rows == 0
         assert date(2020, 1, 1) not in _daily_rows(db)
+
+
+# ---------------------------------------------------------------------------
+# Scoped rebuild (metadata enrichment path)
+# ---------------------------------------------------------------------------
+
+
+def _rollup_snapshot(db: Session) -> tuple[list, list]:
+    """Comparable, order-independent dump of both rollup tables."""
+
+    def _sort_key(row: tuple) -> tuple:
+        return tuple(str(value) for value in row)
+
+    daily = sorted(
+        ((r.date, r.play_count, r.listening_ms) for r in _daily_rows(db).values()),
+        key=_sort_key,
+    )
+    tracks = sorted(
+        (
+            (
+                r.date,
+                r.track_key,
+                r.artist_key,
+                r.album_key,
+                r.track_id,
+                r.artist_id,
+                r.track_name,
+                r.artist_name,
+                r.album_name,
+                r.play_count,
+                r.listening_ms,
+            )
+            for r in _track_rows(db)
+        ),
+        key=_sort_key,
+    )
+    return daily, tracks
+
+
+class TestScopedRebuild:
+    """rebuild_rollups_for_tracks must agree with a full rebuild.
+
+    It is the cheap path used after Spotify metadata enrichment, which can
+    change Track.duration_ms (feeds listening_ms) and fill in
+    Stream.artist_id (changes artist_key), but never adds or removes plays.
+    """
+
+    def test_matches_full_rebuild_after_metadata_enrichment(self, db: Session):
+        _seed(db)
+
+        # Simulate an enrichment pass over track2: duration corrected and the
+        # previously-unknown artist_id backfilled onto its streams.
+        track2 = db.execute(select(Track).where(Track.spotify_id == "track2")).scalar_one()
+        track2.duration_ms = 240_000
+        db.execute(update(Stream).where(Stream.track_id == "track2").values(artist_id="artistY"))
+        db.commit()
+
+        stats = rebuild_rollups_for_tracks(db, ["track2"])
+        db.commit()
+        scoped = _rollup_snapshot(db)
+
+        assert stats.streams_processed == 1
+        assert stats.track_rows == 1
+
+        rebuild_all_rollups(db)
+        db.commit()
+        assert scoped == _rollup_snapshot(db)
+
+    def test_regroups_affected_rows_and_adjusts_daily_totals(self, db: Session):
+        _seed(db)
+        before = _daily_rows(db)[date(2025, 2, 5)]
+        assert before.play_count == 2
+        assert before.listening_ms == 180_000
+
+        track2 = db.execute(select(Track).where(Track.spotify_id == "track2")).scalar_one()
+        track2.duration_ms = 240_000
+        db.execute(update(Stream).where(Stream.track_id == "track2").values(artist_id="artistY"))
+        db.commit()
+
+        rebuild_rollups_for_tracks(db, ["track2"])
+        db.commit()
+
+        daily = _daily_rows(db)[date(2025, 2, 5)]
+        # Play count is untouched by enrichment; only listening_ms moves.
+        assert daily.play_count == 2
+        assert daily.listening_ms == 240_000
+
+        rows = {(r.date, r.track_key): r for r in _track_rows(db)}
+        song_b = rows[(date(2025, 2, 5), "track2")]
+        assert song_b.artist_key == "artistY"
+        assert song_b.artist_id == "artistY"
+        assert song_b.listening_ms == 240_000
+        # The name-keyed row sharing that date is left alone.
+        assert rows[(date(2025, 2, 5), "name:Loose Song")].listening_ms == 0
+
+    def test_leaves_other_tracks_and_dates_untouched(self, db: Session):
+        _seed(db)
+        untouched_before = {
+            (r.date, r.track_key): (r.play_count, r.listening_ms)
+            for r in _track_rows(db)
+            if r.track_key != "track2"
+        }
+        daily_before = {
+            d: (r.play_count, r.listening_ms)
+            for d, r in _daily_rows(db).items()
+            if d != date(2025, 2, 5)
+        }
+
+        track2 = db.execute(select(Track).where(Track.spotify_id == "track2")).scalar_one()
+        track2.duration_ms = 240_000
+        db.commit()
+
+        rebuild_rollups_for_tracks(db, ["track2"])
+        db.commit()
+
+        assert {
+            (r.date, r.track_key): (r.play_count, r.listening_ms)
+            for r in _track_rows(db)
+            if r.track_key != "track2"
+        } == untouched_before
+        assert {
+            d: (r.play_count, r.listening_ms)
+            for d, r in _daily_rows(db).items()
+            if d != date(2025, 2, 5)
+        } == daily_before
+
+    def test_empty_and_blank_ids_are_a_noop(self, db: Session):
+        _seed(db)
+        before = _rollup_snapshot(db)
+
+        stats = rebuild_rollups_for_tracks(db, ["", None])  # type: ignore[list-item]
+        db.commit()
+
+        assert stats == RollupRebuildStats(daily_rows=0, track_rows=0, streams_processed=0)
+        assert _rollup_snapshot(db) == before
+
+    def test_is_idempotent(self, db: Session):
+        _seed(db)
+        rebuild_rollups_for_tracks(db, ["track1"])
+        db.commit()
+        once = _rollup_snapshot(db)
+
+        rebuild_rollups_for_tracks(db, ["track1"])
+        db.commit()
+
+        assert _rollup_snapshot(db) == once
+
+
+# ---------------------------------------------------------------------------
+# Display-column normalization ('' vs NULL)
+# ---------------------------------------------------------------------------
+
+
+class TestOptionalTextNormalization:
+    def test_optional_text_maps_blank_to_none(self):
+        assert optional_text("") is None
+        assert optional_text(None) is None
+        assert optional_text("abc") == "abc"
+
+    def test_blank_ids_and_album_store_as_null(self, db: Session):
+        db.add(
+            Stream(
+                track_name="Blank Fields",
+                artist_name="Blank Artist",
+                album_name="",
+                played_at=datetime(2025, 4, 1, 12, 0),
+                track_id="",
+                artist_id="",
+            )
+        )
+        db.commit()
+
+        row = _track_rows(db)[0]
+        assert row.track_id is None
+        assert row.artist_id is None
+        assert row.album_name is None
+        assert row.track_key == "name:Blank Fields"
+        assert row.album_key == NO_ALBUM_SENTINEL
+
+    def test_rebuild_agrees_with_incremental_on_blank_fields(self, db: Session):
+        db.add(
+            Stream(
+                track_name="Blank Fields",
+                artist_name="Blank Artist",
+                album_name="",
+                played_at=datetime(2025, 4, 1, 12, 0),
+                track_id="",
+                artist_id="",
+            )
+        )
+        db.commit()
+        incremental = _rollup_snapshot(db)
+
+        rebuild_all_rollups(db)
+        db.commit()
+
+        assert _rollup_snapshot(db) == incremental
+
+
+# ---------------------------------------------------------------------------
+# Mutations the incremental hook cannot track
+# ---------------------------------------------------------------------------
+
+
+class TestUnrollupableStreamChanges:
+    def test_stream_delete_warns_and_points_at_the_backfill_script(self, db: Session, caplog):
+        _seed(db)
+        stream = db.execute(select(Stream)).scalars().first()
+
+        with caplog.at_level(logging.WARNING, logger="app.models"):
+            db.delete(stream)
+            db.commit()
+
+        assert "backfill_rollups" in caplog.text
+        assert "deletes 1" in caplog.text
+
+    def test_stream_edit_of_rollup_column_warns(self, db: Session, caplog):
+        _seed(db)
+        stream = db.execute(select(Stream)).scalars().first()
+
+        with caplog.at_level(logging.WARNING, logger="app.models"):
+            stream.played_at = datetime(2030, 1, 1, 12, 0)
+            db.commit()
+
+        assert "edits 1" in caplog.text
+
+    def test_edit_of_non_rollup_column_is_silent(self, db: Session, caplog):
+        _seed(db)
+        stream = db.execute(select(Stream)).scalars().first()
+
+        with caplog.at_level(logging.WARNING, logger="app.models"):
+            stream.duration_ms = 12345
+            db.commit()
+
+        assert caplog.text == ""
+
+    def test_plain_insert_does_not_warn(self, db: Session, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.models"):
+            db.add(
+                Stream(
+                    track_name="Fresh",
+                    artist_name="Fresh Artist",
+                    played_at=datetime(2025, 5, 1, 12, 0),
+                )
+            )
+            db.commit()
+
+        assert caplog.text == ""

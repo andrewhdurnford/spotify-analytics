@@ -5,6 +5,16 @@ scratch by scanning `streams` (see app.services.rollups.rebuild_all_rollups).
 Safe to rerun any time — reruns against unchanged data produce identical
 rollup rows (idempotent).
 
+Run this with --commit as a post-deploy step whenever:
+
+- deploying migration c3d4e5f6a7b8 (its in-migration backfill only sees the
+  streams that exist at migration time; the old app keeps writing plays,
+  without the rollup hook, until the new code is serving);
+- `streams` rows were deleted or edited in place — the incremental
+  `before_flush` hook in app.models is insert-only and logs a warning when it
+  sees such a flush;
+- a metadata enrichment run reported a failed rollup recompute.
+
 Usage (inside the backend container or a local .venv per CLAUDE.md):
 
     # Preview counts without writing anything
