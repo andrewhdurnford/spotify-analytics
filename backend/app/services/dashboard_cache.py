@@ -8,13 +8,18 @@ cannot grow the cache without bound -- once `maxsize` entries are held, the
 least-recently-used entry is evicted to make room for a new one).
 """
 
+import asyncio
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Hashable
+from collections.abc import AsyncIterator, Awaitable, Callable, Hashable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from threading import Lock
 from time import monotonic
 from typing import TypeVar
 
 T = TypeVar("T")
+
+# Sentinel distinguishing "no fresh entry" from a cached ``None`` value.
+_MISS = object()
 
 ALL_TIME_TTL_SECONDS = 15 * 60
 FILTERED_TTL_SECONDS = 60
@@ -25,11 +30,16 @@ DEFAULT_MAXSIZE = 250
 
 
 class DashboardCache:
-    """Bounded, thread-safe TTL cache with LRU eviction.
+    """Bounded, thread-safe TTL cache with LRU eviction and single-flight loads.
 
     Entries are stored with a per-entry expiry. When the number of stored
     entries would exceed `maxsize`, the least-recently-used entry is evicted
     (an entry counts as "used" both when it's stored and when it's read).
+
+    Concurrent misses on the same key run the loader once: the first caller
+    loads while the others wait on a per-key lock and then read the stored
+    value. Without that, a burst of simultaneous requests would each run the
+    expensive query the cache exists to avoid.
     """
 
     def __init__(
@@ -43,6 +53,10 @@ class DashboardCache:
         self._maxsize = maxsize
         self._entries: OrderedDict[Hashable, tuple[float, object]] = OrderedDict()
         self._lock = Lock()
+        # key -> [lock, waiter_count]; entries are dropped once the last
+        # in-flight loader for that key finishes, so these can't accumulate.
+        self._sync_loads: dict[Hashable, list] = {}
+        self._async_loads: dict[Hashable, list] = {}
 
     @property
     def maxsize(self) -> int:
@@ -52,39 +66,103 @@ class DashboardCache:
         with self._lock:
             return len(self._entries)
 
-    def get_or_set(self, key: Hashable, ttl_seconds: int, loader: Callable[[], T]) -> T:
-        now = self._clock()
-        with self._lock:
-            cached = self._entries.get(key)
-            if cached and cached[0] > now:
-                self._entries.move_to_end(key)
-                return cached[1]  # type: ignore[return-value]
+    def get_or_set(
+        self,
+        key: Hashable,
+        ttl_seconds: int,
+        loader: Callable[[], T],
+        cache_none: bool = True,
+    ) -> T:
+        """Return the cached value for `key`, loading it if absent/expired.
 
-        value = loader()
+        `cache_none=False` skips storing a `None` result, so lookups for
+        nonexistent entities don't occupy a slot (and evict real aggregates)
+        for the whole TTL.
+        """
+        cached = self._get_fresh(key)
+        if cached is not _MISS:
+            return cached  # type: ignore[return-value]
 
-        with self._lock:
-            self._store(key, ttl_seconds, value)
-        return value
+        with self._single_flight(key):
+            # Another caller may have populated the entry while we waited.
+            cached = self._get_fresh(key)
+            if cached is not _MISS:
+                return cached  # type: ignore[return-value]
+
+            value = loader()
+            if value is not None or cache_none:
+                with self._lock:
+                    self._store(key, ttl_seconds, value)
+            return value
 
     async def get_or_set_async(
-        self, key: Hashable, ttl_seconds: int, loader: Callable[[], Awaitable[T]]
+        self,
+        key: Hashable,
+        ttl_seconds: int,
+        loader: Callable[[], Awaitable[T]],
+        cache_none: bool = True,
     ) -> T:
         """Async counterpart of `get_or_set` for async loaders (e.g. outbound
         HTTP calls). The lock is only held around the dict access, never
         across the `await`, so it's safe to share with the sync API.
         """
+        cached = self._get_fresh(key)
+        if cached is not _MISS:
+            return cached  # type: ignore[return-value]
+
+        async with self._single_flight_async(key):
+            cached = self._get_fresh(key)
+            if cached is not _MISS:
+                return cached  # type: ignore[return-value]
+
+            value = await loader()
+            if value is not None or cache_none:
+                with self._lock:
+                    self._store(key, ttl_seconds, value)
+            return value
+
+    def _get_fresh(self, key: Hashable) -> object:
+        """Return the unexpired cached value for `key`, or `_MISS`."""
         now = self._clock()
         with self._lock:
             cached = self._entries.get(key)
-            if cached and cached[0] > now:
+            if cached is not None and cached[0] > now:
                 self._entries.move_to_end(key)
-                return cached[1]  # type: ignore[return-value]
+                return cached[1]
+        return _MISS
 
-        value = await loader()
-
+    def _checkout_load_lock(self, registry: dict, key: Hashable, factory: Callable):
         with self._lock:
-            self._store(key, ttl_seconds, value)
-        return value
+            entry = registry.get(key)
+            if entry is None:
+                entry = [factory(), 0]
+                registry[key] = entry
+            entry[1] += 1
+            return entry
+
+    def _release_load_lock(self, registry: dict, key: Hashable, entry: list) -> None:
+        with self._lock:
+            entry[1] -= 1
+            if entry[1] <= 0 and registry.get(key) is entry:
+                del registry[key]
+
+    @contextmanager
+    def _single_flight(self, key: Hashable) -> Iterator[None]:
+        entry = self._checkout_load_lock(self._sync_loads, key, Lock)
+        try:
+            with entry[0]:
+                yield
+        finally:
+            self._release_load_lock(self._sync_loads, key, entry)
+
+    @asynccontextmanager
+    async def _single_flight_async(self, key: Hashable) -> AsyncIterator[None]:
+        entry = self._checkout_load_lock(self._async_loads, key, asyncio.Lock)
+        try:
+            async with entry[0]:
+                yield
+        finally:
+            self._release_load_lock(self._async_loads, key, entry)
 
     def _store(self, key: Hashable, ttl_seconds: int, value: object) -> None:
         """Insert/refresh an entry and evict LRU entries over capacity.

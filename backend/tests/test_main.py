@@ -65,6 +65,7 @@ class TestCronSyncTracks:
 
         # Reload settings to pick up the env override
         with (
+            patch("app.services.cron_auth.settings", Settings(cron_secret="test-secret-123")),
             patch("app.main.settings", Settings(cron_secret="test-secret-123")),
             patch(
                 "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
@@ -84,6 +85,7 @@ class TestCronSyncTracks:
         from app.config import Settings
 
         with (
+            patch("app.services.cron_auth.settings", Settings(cron_secret="test-secret-123")),
             patch("app.main.settings", Settings(cron_secret="test-secret-123")),
             patch(
                 "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
@@ -102,7 +104,10 @@ class TestCronSyncTracks:
         the endpoint must not authenticate a client sending the resulting
         'Bearer ' token (or no token at all).
         """
-        with patch("app.main.settings", Settings(database_url=VALID_DB_URL, cron_secret="")):
+        with patch(
+            "app.services.cron_auth.settings",
+            Settings(database_url=VALID_DB_URL, cron_secret=""),
+        ):
             resp = client.post(
                 "/api/cron/sync-tracks",
                 headers={"Authorization": "Bearer "},
@@ -115,9 +120,10 @@ class TestCronSyncTracks:
         asserting `secrets.compare_digest` is actually invoked.
         """
         with (
-            patch("app.main.settings", Settings(cron_secret="test-secret-123")),
+            patch("app.services.cron_auth.settings", Settings(cron_secret="test-secret-123")),
             patch(
-                "app.main.secrets.compare_digest", wraps=__import__("secrets").compare_digest
+                "app.services.cron_auth.secrets.compare_digest",
+                wraps=__import__("secrets").compare_digest,
             ) as mock_compare,
         ):
             resp = client.post(
@@ -125,7 +131,22 @@ class TestCronSyncTracks:
                 headers={"Authorization": "Bearer wrong"},
             )
             assert resp.status_code == 401
-            mock_compare.assert_called_once()
+            assert mock_compare.called
+
+    def test_non_ascii_authorization_header_is_rejected_not_a_500(self, client):
+        """`secrets.compare_digest` raises TypeError on non-ASCII `str`, and
+        Starlette decodes headers as latin-1 -- comparing bytes keeps a header
+        like `Bearer é` a 401 instead of an attacker-triggerable 500.
+        """
+        with patch(
+            "app.services.cron_auth.settings",
+            Settings(database_url=VALID_DB_URL, cron_secret="test-secret-123"),
+        ):
+            resp = client.post(
+                "/api/cron/sync-tracks",
+                headers={"Authorization": "Bearer é".encode("latin-1")},
+            )
+            assert resp.status_code == 401
 
 
 class TestDocsUrlsForEnvironment:

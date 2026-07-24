@@ -8,6 +8,8 @@ from datetime import datetime
 from app.models import Artist, Stream, Track
 from app.services.rate_limit import RateLimiter
 
+VALID_DB_URL = "postgresql://test:test@localhost/test?sslmode=require"
+
 
 def _seed(db):
     track = Track(
@@ -138,6 +140,33 @@ class TestGeneralAnalyticsRateLimit:
         assert client.get("/api/top/songs").status_code == 429
         assert client.get("/api/top/artists").status_code == 200
 
+    def test_rotating_path_parameters_share_one_budget(self, client, db):
+        """Keying on the concrete path would mint a fresh 60/min bucket per
+        artist_id, leaving the per-entity DB queries effectively unlimited.
+        """
+        _seed(db)
+        for index in range(60):
+            resp = client.get(f"/api/artists/rotating-{index}")
+            # 404s still count -- the DB work happens before the miss.
+            assert resp.status_code == 404
+
+        blocked = client.get("/api/artists/rotating-fresh-id")
+        assert blocked.status_code == 429
+        assert blocked.json()["detail"]["error"]["code"] == "RATE_LIMITED"
+
+    def test_rotating_path_parameters_cannot_flush_other_buckets(self, client, db):
+        """Distinct paths must not insert distinct limiter keys, otherwise a
+        client could LRU-evict its own throttled bucket (or other clients')
+        by minting enough of them.
+        """
+        from app.services.rate_limit import general_limiter
+
+        _seed(db)
+        for index in range(30):
+            client.get(f"/api/artists/rotating-{index}")
+
+        assert len(general_limiter._buckets) == 1
+
     def test_stays_within_bounds_below_the_threshold(self, client, db):
         _seed(db)
         for _ in range(59):
@@ -184,3 +213,52 @@ class TestCronSyncRateLimit:
             assert resp.status_code == 401
         blocked = client.post("/api/cron/sync-tracks")
         assert blocked.status_code == 429
+
+    def test_unauthenticated_flood_does_not_starve_the_real_cron(self, client):
+        """The limiter runs before auth, so an unauthenticated flood must not
+        consume the legitimate cron job's allowance -- otherwise anyone
+        (especially behind a proxy, where all callers share one client key)
+        could silently break sync.
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from app.config import Settings
+
+        for _ in range(5):
+            client.post("/api/cron/sync-tracks")
+        assert client.post("/api/cron/sync-tracks").status_code == 429
+
+        settings = Settings(database_url=VALID_DB_URL, cron_secret="test-secret-123")
+        with (
+            patch("app.services.cron_auth.settings", settings),
+            patch("app.main.settings", settings),
+            patch(
+                "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
+                new_callable=AsyncMock,
+            ),
+        ):
+            resp = client.post(
+                "/api/cron/sync-tracks",
+                headers={"Authorization": "Bearer test-secret-123"},
+            )
+            assert resp.status_code == 200
+
+    def test_authenticated_requests_are_still_bounded(self, client):
+        from unittest.mock import AsyncMock, patch
+
+        from app.config import Settings
+
+        settings = Settings(database_url=VALID_DB_URL, cron_secret="test-secret-123")
+        headers = {"Authorization": "Bearer test-secret-123"}
+        with (
+            patch("app.services.cron_auth.settings", settings),
+            patch("app.main.settings", settings),
+            patch(
+                "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
+                new_callable=AsyncMock,
+            ),
+        ):
+            for _ in range(10):
+                assert client.post("/api/cron/sync-tracks", headers=headers).status_code == 200
+            blocked = client.post("/api/cron/sync-tracks", headers=headers)
+            assert blocked.status_code == 429

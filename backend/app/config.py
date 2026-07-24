@@ -1,7 +1,10 @@
+import logging
 from typing import Literal
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -53,11 +56,21 @@ class Settings(BaseSettings):
         return value.strip().lower()
 
     @model_validator(mode="after")
-    def validate_cron_secret_in_production(self) -> "Settings":
-        if self.environment == "production" and not self.cron_secret.strip():
-            raise ValueError(
-                "CRON_SECRET must be set to a non-empty value when ENVIRONMENT=production"
-            )
+    def validate_production_requirements(self) -> "Settings":
+        if self.environment == "production":
+            if not self.cron_secret.strip():
+                raise ValueError(
+                    "CRON_SECRET must be set to a non-empty value when ENVIRONMENT=production"
+                )
+            # A blank value would silently fall back to "*" (no host
+            # checking) -- in production that's a typo, not a choice.
+            if not self.allowed_hosts.strip():
+                raise ValueError(
+                    'ALLOWED_HOSTS must be non-empty when ENVIRONMENT=production (set "*" '
+                    "explicitly to disable host checking)"
+                )
+        elif not self.allowed_hosts.strip():
+            logger.warning('ALLOWED_HOSTS is blank; host checking is disabled (treated as "*")')
         return self
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)

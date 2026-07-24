@@ -167,13 +167,15 @@ def get_related_tracks(
 
     Results are cached (keyed by track_id + limit) for
     `RELATED_TRACKS_TTL_SECONDS` since the underlying computation walks the
-    full session history on every call.
+    full session history on every call. Misses (unknown track_id -> 404)
+    aren't cached, so bogus IDs can't occupy slots in the shared pool.
     """
     key = ("related-tracks", track_id, limit)
     result = dashboard_cache.get_or_set(
         key,
         RELATED_TRACKS_TTL_SECONDS,
         lambda: detail_service.get_related_tracks(db, track_id, limit=limit),
+        cache_none=False,
     )
     if result is None:
         raise HTTPException(

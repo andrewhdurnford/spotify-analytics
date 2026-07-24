@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import secrets
 import time
 from contextlib import asynccontextmanager, suppress
 
@@ -19,6 +18,7 @@ from .schemas import (
     MessageResponse,
     SyncStatusResponse,
 )
+from .services.cron_auth import cron_token_is_valid
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -101,6 +101,12 @@ def cors_origins_for(app_settings: Settings) -> list[str]:
 async def _run_with_timeout(call_next_coro, timeout_seconds: float):
     """Run `call_next_coro()` under a deadline, returning a structured 504
     JSONResponse if it doesn't complete in time.
+
+    This bounds how long a *client* waits, not how long the server works:
+    sync `def` handlers run in the threadpool, and cancelling the awaiting
+    coroutine doesn't stop that thread. The DB `statement_timeout`
+    (`database.py`) is what actually sheds slow query load; this middleware
+    is the client-facing complement.
 
     Extracted as a standalone helper (rather than inlined in the
     middleware) so the timeout branch is directly unit-testable without
@@ -201,16 +207,7 @@ async def cron_sync_tracks(authorization: str = Header(None)):
     Endpoint triggered by external cron service (cron-job.org).
     Protected by secret token to prevent unauthorized access.
     """
-    provided_token = authorization or ""
-    expected_token = f"Bearer {settings.cron_secret}"
-    # A blank CRON_SECRET must never authenticate anything, regardless of
-    # what's sent -- otherwise a misconfigured (empty) secret would let an
-    # empty/`Bearer ` token through. Comparison is constant-time to avoid
-    # leaking the secret's value/length via response timing.
-    token_is_valid = bool(settings.cron_secret) and secrets.compare_digest(
-        provided_token, expected_token
-    )
-    if not token_is_valid:
+    if not cron_token_is_valid(authorization):
         logger.warning("Unauthorized cron attempt")
         raise HTTPException(
             status_code=401,

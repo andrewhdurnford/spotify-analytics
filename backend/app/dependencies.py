@@ -3,10 +3,12 @@ import os
 from datetime import datetime, timedelta
 
 import httpx
-from fastapi import HTTPException, Request
+from fastapi import Header, HTTPException, Request
 
+from .services.cron_auth import cron_token_is_valid
 from .services.rate_limit import (
     RateLimiter,
+    cron_authenticated_limiter,
     cron_limiter,
     currently_playing_limiter,
     general_limiter,
@@ -120,14 +122,29 @@ def _client_key(request: Request) -> str:
     """Return the client identity established by the ASGI server.
 
     Proxy headers must be interpreted only by a server configured with a
-    trusted-proxy allow-list. Reading X-Forwarded-For here would let direct
-    clients mint arbitrary limiter identities.
+    trusted-proxy allow-list (see FORWARDED_ALLOW_IPS in `.env.example`).
+    Reading X-Forwarded-For here would let direct clients mint arbitrary
+    limiter identities.
     """
     return request.client.host if request.client else "unknown"
 
 
-def _enforce_rate_limit(limiter: RateLimiter, request: Request) -> None:
-    if not limiter.allow(_client_key(request)):
+def _route_key(request: Request) -> str:
+    """Return the matched route's template, e.g. "/api/artists/{artist_id}".
+
+    Keying on the concrete `request.url.path` instead would give every
+    distinct path parameter value its own fresh budget, so a client rotating
+    IDs would face no effective limit on exactly the per-entity endpoints
+    that hit the DB -- and the resulting key churn would evict other
+    clients' (and its own throttled) buckets from the limiter's bounded
+    table.
+    """
+    path_format = getattr(request.scope.get("route"), "path_format", None)
+    return path_format if isinstance(path_format, str) else request.url.path
+
+
+def _enforce_rate_limit(limiter: RateLimiter, key: str) -> None:
+    if not limiter.allow(key):
         raise HTTPException(
             status_code=429,
             detail={
@@ -141,28 +158,30 @@ def _enforce_rate_limit(limiter: RateLimiter, request: Request) -> None:
 
 def require_general_rate_limit(request: Request) -> None:
     # The documented 60/minute threshold is per analytics route. Scoping the
-    # key by path also prevents the dashboard aggregator's parallel calls to
+    # key by route also prevents the dashboard aggregator's parallel calls to
     # six different endpoints from consuming one shared allowance.
-    key = f"{_client_key(request)}:{request.url.path}"
-    if not general_limiter.allow(key):
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": {
-                    "code": "RATE_LIMITED",
-                    "message": "Too many requests. Please slow down and try again shortly.",
-                }
-            },
-        )
+    _enforce_rate_limit(general_limiter, f"{_client_key(request)}:{_route_key(request)}")
 
 
 def require_currently_playing_rate_limit(request: Request) -> None:
-    _enforce_rate_limit(currently_playing_limiter, request)
+    _enforce_rate_limit(currently_playing_limiter, _client_key(request))
 
 
 def require_related_tracks_rate_limit(request: Request) -> None:
-    _enforce_rate_limit(related_tracks_limiter, request)
+    _enforce_rate_limit(related_tracks_limiter, _client_key(request))
 
 
-def require_cron_rate_limit(request: Request) -> None:
-    _enforce_rate_limit(cron_limiter, request)
+def require_cron_rate_limit(request: Request, authorization: str = Header(None)) -> None:
+    """Throttle cron attempts, with a separate budget once authenticated.
+
+    The limiter necessarily runs before the endpoint's own auth check, so a
+    single tiny budget would let anyone starve the real cron job -- more so
+    behind a proxy, where every caller can collapse onto one client key.
+    Requests carrying a valid CRON_SECRET are counted against their own
+    (larger) bucket, so unauthenticated floods can't consume the legitimate
+    cron's allowance.
+    """
+    if cron_token_is_valid(authorization):
+        _enforce_rate_limit(cron_authenticated_limiter, _client_key(request))
+        return
+    _enforce_rate_limit(cron_limiter, _client_key(request))

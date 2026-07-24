@@ -47,6 +47,27 @@ class TestAllowedHostsList:
         )
         assert settings.allowed_hosts_list() == ["api.example.com", "api2.example.com"]
 
-    def test_blank_value_falls_back_to_wildcard(self):
-        settings = Settings(database_url=VALID_DB_URL, allowed_hosts="  ")
+    def test_blank_value_falls_back_to_wildcard_in_development(self, caplog):
+        with caplog.at_level("WARNING"):
+            settings = Settings(database_url=VALID_DB_URL, allowed_hosts="  ")
+        assert settings.allowed_hosts_list() == ["*"]
+        assert "host checking is disabled" in caplog.text
+
+    def test_production_with_blank_allowed_hosts_fails_to_construct(self):
+        """Blank would silently fail open to "*"; in production that's a typo."""
+        with pytest.raises(ValidationError):
+            Settings(
+                database_url=VALID_DB_URL,
+                environment="production",
+                cron_secret="real-secret",
+                allowed_hosts="  ",
+            )
+
+    def test_production_with_explicit_wildcard_is_allowed(self):
+        settings = Settings(
+            database_url=VALID_DB_URL,
+            environment="production",
+            cron_secret="real-secret",
+            allowed_hosts="*",
+        )
         assert settings.allowed_hosts_list() == ["*"]
