@@ -3,7 +3,8 @@ from datetime import datetime, timedelta
 import pytest
 from sqlalchemy import select
 
-from app.models import Artist, Stream, Track
+from app.models import Artist, DailyListeningStats, DailyTrackStats, Stream, Track
+from app.services import rollups as rollups_service
 from app.services.playback_sync import store_completed_play
 
 
@@ -195,3 +196,77 @@ async def test_store_completed_play_handles_tracks_without_artists(db):
 
     stored_track = db.execute(select(Track)).scalar_one()
     assert stored_track.artist_name is None
+
+
+# ---------------------------------------------------------------------------
+# Atomic raw + rollup write path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_store_completed_play_writes_rollups_in_same_transaction(db, playback_track):
+    """A successful completed play updates streams AND daily_listening_stats /
+    daily_track_stats together (both committed by the same db.commit())."""
+    played_at = datetime(2025, 1, 1, 12, 0, 0)
+
+    result = await store_completed_play(
+        db,
+        playback_track,
+        progress_ms=206000,
+        played_at=played_at,
+        fetch_artist_details=fetch_artist_details,
+    )
+
+    assert result.stored is True
+
+    daily = db.execute(select(DailyListeningStats)).scalar_one()
+    assert daily.date.isoformat() == "2025-01-01"
+    assert daily.play_count == 1
+    assert daily.listening_ms == 210000
+
+    track_row = db.execute(select(DailyTrackStats)).scalar_one()
+    assert track_row.track_id == "track-1"
+    assert track_row.artist_id == "artist-1"
+    assert track_row.play_count == 1
+    assert track_row.listening_ms == 210000
+
+
+@pytest.mark.asyncio
+async def test_store_completed_play_rolls_back_stream_when_rollup_write_fails(
+    db, playback_track, monkeypatch
+):
+    """If rollup maintenance raises during the flush, nothing from this call
+    — not the Stream, not the rollup rows — should be persisted."""
+
+    def _boom(session, stream, **kwargs):
+        raise RuntimeError("simulated rollup failure")
+
+    monkeypatch.setattr(rollups_service, "apply_stream_to_rollups", _boom)
+
+    with pytest.raises(RuntimeError, match="simulated rollup failure"):
+        await store_completed_play(
+            db,
+            playback_track,
+            progress_ms=206000,
+            played_at=datetime(2025, 1, 1, 12, 0, 0),
+            fetch_artist_details=fetch_artist_details,
+        )
+
+    # The failed transaction was rolled back — nothing from this call landed,
+    # including the Stream row that had already been added to the session.
+    assert db.execute(select(Stream)).scalars().all() == []
+    assert db.execute(select(DailyListeningStats)).scalars().all() == []
+    assert db.execute(select(DailyTrackStats)).scalars().all() == []
+
+    # The session is usable again afterward (rollback() cleared the failed
+    # transaction state rather than leaving it stuck).
+    monkeypatch.undo()
+    result = await store_completed_play(
+        db,
+        playback_track,
+        progress_ms=206000,
+        played_at=datetime(2025, 1, 1, 12, 0, 0),
+        fetch_artist_details=fetch_artist_details,
+    )
+    assert result.stored is True
+    assert len(db.execute(select(Stream)).scalars().all()) == 1

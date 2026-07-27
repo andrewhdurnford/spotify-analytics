@@ -2,18 +2,27 @@
 
 Provides queries for individual artist/track metadata, play counts,
 top songs/albums per artist, and monthly listening timelines.
+
+Totals, rankings (top songs/albums/tracks), and timelines are rollup-backed
+(read from `daily_track_stats`) rather than scanning raw `streams`. Simple
+point lookups (existence checks, "grab one album image/artist name") stay
+Stream-based since they're already cheap single-row lookups, not scans.
+`get_related_tracks` needs individual play-event ordering for session
+detection and is intentionally left Stream-based (rollups have no per-event
+grain).
 """
 
 import logging
 import math
 import time
 from collections import defaultdict
+from datetime import date as date_type
 from datetime import datetime
 
 from sqlalchemy import desc, extract, func, select
 from sqlalchemy.orm import Session
 
-from ..models import Artist, Stream, Track
+from ..models import Artist, DailyTrackStats, Stream, Track
 from ..schemas import (
     AlbumDetail,
     AlbumDetailResponse,
@@ -28,8 +37,9 @@ from ..schemas import (
     TrackDetail,
     TrackDetailResponse,
 )
-from .timezone import display_timestamp, utc_naive_to_display
-from .top import get_date_range
+from .rollups import NO_ALBUM_SENTINEL
+from .timezone import utc_naive_to_display
+from .top import get_local_date_range
 
 logger = logging.getLogger(__name__)
 
@@ -58,57 +68,34 @@ def _get_available_periods(db: Session, *filters) -> AvailablePeriods:
     )
 
 
-def _build_monthly_timeline_query(
-    filter_col,
-    filter_val: str,
-    start: datetime | None,
-    end: datetime | None,
-):
-    """Build a monthly play-count timeline query for a given filter."""
-    local_played_at = display_timestamp(Stream.played_at)
-    year_col = extract("year", local_played_at).label("yr")
-    month_col = extract("month", local_played_at).label("mo")
-
-    stmt = select(
-        year_col,
-        month_col,
-        func.count(Stream.id).label("play_count"),
-    ).where(filter_col == filter_val)
-
-    if start and end:
-        stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
-
-    return stmt.group_by(year_col, month_col).order_by(year_col, month_col)
+def _daily_track_stats_range_filter(start_date: date_type | None, end_date: date_type | None):
+    if start_date and end_date:
+        return (DailyTrackStats.date >= start_date, DailyTrackStats.date < end_date)
+    return ()
 
 
-def _build_daily_timeline_query(
-    filter_col,
-    filter_val: str,
-    start: datetime | None,
-    end: datetime | None,
-):
-    """Build a daily play-count timeline query for a given filter."""
-    date_col = func.date(display_timestamp(Stream.played_at)).label("day")
-
-    stmt = select(
-        date_col,
-        func.count(Stream.id).label("play_count"),
-    ).where(filter_col == filter_val)
-
-    if start and end:
-        stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
-
-    return stmt.group_by(date_col).order_by(date_col)
-
-
-def _build_timeline(filter_col, filter_val: str, timeframe: str, start, end):
-    """Build timeline data and return (timeline_list, granularity)."""
+def _build_rollup_timeline_query(filters: tuple, timeframe: str):
+    """Build a daily (month timeframe) or monthly (otherwise) timeline query
+    against daily_track_stats for the given filter clauses, and return
+    (query, granularity)."""
     if timeframe == "month":
-        query = _build_daily_timeline_query(filter_col, filter_val, start, end)
-        return query, "daily"
+        stmt = (
+            select(DailyTrackStats.date, func.sum(DailyTrackStats.play_count).label("play_count"))
+            .where(*filters)
+            .group_by(DailyTrackStats.date)
+            .order_by(DailyTrackStats.date)
+        )
+        return stmt, "daily"
     else:
-        query = _build_monthly_timeline_query(filter_col, filter_val, start, end)
-        return query, "monthly"
+        year_col = extract("year", DailyTrackStats.date).label("yr")
+        month_col = extract("month", DailyTrackStats.date).label("mo")
+        stmt = (
+            select(year_col, month_col, func.sum(DailyTrackStats.play_count).label("play_count"))
+            .where(*filters)
+            .group_by(year_col, month_col)
+            .order_by(year_col, month_col)
+        )
+        return stmt, "monthly"
 
 
 def _format_timeline_results(results, granularity: str) -> list[PlayCountOverTime]:
@@ -116,8 +103,8 @@ def _format_timeline_results(results, granularity: str) -> list[PlayCountOverTim
     if granularity == "daily":
         return [
             PlayCountOverTime(
-                period=str(r.day),
-                play_count=r.play_count,
+                period=str(r.date),
+                play_count=int(r.play_count),
             )
             for r in results
         ]
@@ -125,7 +112,7 @@ def _format_timeline_results(results, granularity: str) -> list[PlayCountOverTim
         return [
             PlayCountOverTime(
                 period=f"{int(r.yr)}-{int(r.mo):02d}",
-                play_count=r.play_count,
+                play_count=int(r.play_count),
             )
             for r in results
         ]
@@ -147,104 +134,90 @@ def get_artist_detail(
     if not artist:
         return None
 
-    start, end = get_date_range(timeframe, base_date)
+    start_date, end_date = get_local_date_range(timeframe, base_date)
+    range_filter = _daily_track_stats_range_filter(start_date, end_date)
+    artist_filter = (DailyTrackStats.artist_id == artist_id, *range_filter)
 
     # Total play count (filtered by timeframe)
-    count_stmt = select(func.count(Stream.id)).where(Stream.artist_id == artist_id)
-    if start and end:
-        count_stmt = count_stmt.where(Stream.played_at >= start, Stream.played_at < end)
-    total_play_count = db.execute(count_stmt).scalar() or 0
+    total_play_count = db.execute(
+        select(func.coalesce(func.sum(DailyTrackStats.play_count), 0)).where(*artist_filter)
+    ).scalar_one()
 
     # Top songs for this artist
-    song_group_key = func.coalesce(Stream.track_id, Stream.track_name).label("group_key")
-    song_counts = select(
-        song_group_key,
-        func.count(Stream.id).label("play_count"),
-    ).where(Stream.artist_id == artist_id)
-
-    if start and end:
-        song_counts = song_counts.where(Stream.played_at >= start, Stream.played_at < end)
-
-    song_counts = (
-        song_counts.group_by("group_key").order_by(desc("play_count")).limit(limit).subquery()
+    song_counts_with_id = (
+        select(
+            DailyTrackStats.track_key,
+            func.max(DailyTrackStats.track_name).label("track_name"),
+            func.max(DailyTrackStats.track_id).label("track_id"),
+            func.sum(DailyTrackStats.play_count).label("play_count"),
+        )
+        .where(*artist_filter)
+        .group_by(DailyTrackStats.track_key)
+        .order_by(desc("play_count"))
+        .limit(limit)
+        .subquery()
     )
-
     songs_query = (
         select(
-            Stream.track_name,
-            Stream.artist_name,
-            Stream.track_id,
-            Stream.artist_id,
+            song_counts_with_id.c.track_name,
+            song_counts_with_id.c.track_id,
             Track.album_image,
-            song_counts.c.play_count,
+            song_counts_with_id.c.play_count,
         )
-        .join(
-            song_counts,
-            func.coalesce(Stream.track_id, Stream.track_name) == song_counts.c.group_key,
-        )
-        .outerjoin(Track, Stream.track_id == Track.spotify_id)
-        .where(Stream.artist_id == artist_id)
-        .group_by(
-            Stream.track_name,
-            Stream.artist_name,
-            Stream.track_id,
-            Stream.artist_id,
-            Track.album_image,
-            song_counts.c.play_count,
-        )
-        .order_by(desc(song_counts.c.play_count))
+        .outerjoin(Track, song_counts_with_id.c.track_id == Track.spotify_id)
+        .order_by(desc(song_counts_with_id.c.play_count))
     )
 
     song_results = db.execute(songs_query).all()
     top_songs = [
         TopSong(
             track_name=r.track_name,
-            artist_name=r.artist_name,
+            artist_name=artist.name,
             track_id=r.track_id,
-            artist_id=r.artist_id,
+            artist_id=artist_id,
             album_image=r.album_image,
-            play_count=r.play_count,
+            play_count=int(r.play_count),
         )
         for r in song_results
     ]
 
     # Top albums for this artist
-    album_stmt = (
+    album_counts = (
         select(
-            Stream.album_name,
-            Stream.artist_name,
-            Track.album_image,
-            func.count(Stream.id).label("play_count"),
+            DailyTrackStats.album_key,
+            func.max(DailyTrackStats.track_id).label("track_id"),
+            func.sum(DailyTrackStats.play_count).label("play_count"),
         )
-        .outerjoin(Track, Stream.track_id == Track.spotify_id)
-        .where(Stream.artist_id == artist_id)
-    )
-
-    if start and end:
-        album_stmt = album_stmt.where(Stream.played_at >= start, Stream.played_at < end)
-
-    album_query = (
-        album_stmt.group_by(Stream.album_name, Stream.artist_name, Track.album_image)
+        .where(*artist_filter)
+        .group_by(DailyTrackStats.album_key)
         .order_by(desc("play_count"))
         .limit(limit)
+        .subquery()
+    )
+    album_query = (
+        select(
+            album_counts.c.album_key,
+            Track.album_image,
+            album_counts.c.play_count,
+        )
+        .outerjoin(Track, album_counts.c.track_id == Track.spotify_id)
+        .order_by(desc(album_counts.c.play_count))
     )
 
     album_results = db.execute(album_query).all()
     top_albums = [
         TopAlbum(
-            album_name=r.album_name,
-            artist_name=r.artist_name,
+            album_name=r.album_key if r.album_key != NO_ALBUM_SENTINEL else None,
+            artist_name=artist.name,
             artist_id=artist_id,
             album_image=r.album_image,
-            play_count=r.play_count,
+            play_count=int(r.play_count),
         )
         for r in album_results
     ]
 
     # Listening timeline (daily for month, monthly otherwise)
-    timeline_query, granularity = _build_timeline(
-        Stream.artist_id, artist_id, timeframe, start, end
-    )
+    timeline_query, granularity = _build_rollup_timeline_query(artist_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
     timeline = _format_timeline_results(timeline_results, granularity)
 
@@ -260,7 +233,7 @@ def get_artist_detail(
             image_url=artist.image_url,
             genres=artist.genres or [],
             popularity=artist.popularity,
-            total_play_count=total_play_count,
+            total_play_count=int(total_play_count),
         ),
         top_songs=top_songs,
         top_albums=top_albums,
@@ -287,9 +260,10 @@ def get_album_detail(
     if not db.execute(exists_stmt).first():
         return None
 
-    artist_name = db.execute(
-        select(Stream.artist_name).where(*base_filter).limit(1)
-    ).scalar_one_or_none() or ""
+    artist_name = (
+        db.execute(select(Stream.artist_name).where(*base_filter).limit(1)).scalar_one_or_none()
+        or ""
+    )
 
     album_image = db.execute(
         select(Track.album_image)
@@ -298,62 +272,44 @@ def get_album_detail(
         .limit(1)
     ).scalar_one_or_none()
 
-    start, end = get_date_range(timeframe, base_date)
+    start_date, end_date = get_local_date_range(timeframe, base_date)
+    range_filter = _daily_track_stats_range_filter(start_date, end_date)
+    album_filter = (
+        DailyTrackStats.artist_id == artist_id,
+        DailyTrackStats.album_key == album_name,
+        *range_filter,
+    )
 
-    count_stmt = select(func.count(Stream.id)).where(*base_filter)
-    if start and end:
-        count_stmt = count_stmt.where(Stream.played_at >= start, Stream.played_at < end)
-    total_play_count = db.execute(count_stmt).scalar() or 0
+    total_play_count = db.execute(
+        select(func.coalesce(func.sum(DailyTrackStats.play_count), 0)).where(*album_filter)
+    ).scalar_one()
 
-    unique_tracks_stmt = select(
-        func.count(func.distinct(func.coalesce(Stream.track_id, Stream.track_name)))
-    ).where(*base_filter)
-    if start and end:
-        unique_tracks_stmt = unique_tracks_stmt.where(
-            Stream.played_at >= start, Stream.played_at < end
-        )
-    unique_tracks_played = db.execute(unique_tracks_stmt).scalar() or 0
+    unique_tracks_played = db.execute(
+        select(func.count(func.distinct(DailyTrackStats.track_key))).where(*album_filter)
+    ).scalar_one()
 
     # Top tracks on this album
-    track_group_key = func.coalesce(Stream.track_id, Stream.track_name).label("group_key")
-    track_counts_stmt = select(
-        track_group_key,
-        func.count(Stream.id).label("play_count"),
-    ).where(*base_filter)
-    if start and end:
-        track_counts_stmt = track_counts_stmt.where(
-            Stream.played_at >= start, Stream.played_at < end
-        )
     track_counts = (
-        track_counts_stmt.group_by("group_key")
+        select(
+            DailyTrackStats.track_key,
+            func.max(DailyTrackStats.track_name).label("track_name"),
+            func.max(DailyTrackStats.track_id).label("track_id"),
+            func.sum(DailyTrackStats.play_count).label("play_count"),
+        )
+        .where(*album_filter)
+        .group_by(DailyTrackStats.track_key)
         .order_by(desc("play_count"))
         .limit(limit)
         .subquery()
     )
-
     tracks_query = (
         select(
-            Stream.track_name,
-            Stream.artist_name,
-            Stream.track_id,
-            Stream.artist_id,
+            track_counts.c.track_name,
+            track_counts.c.track_id,
             Track.album_image,
             track_counts.c.play_count,
         )
-        .join(
-            track_counts,
-            func.coalesce(Stream.track_id, Stream.track_name) == track_counts.c.group_key,
-        )
-        .outerjoin(Track, Stream.track_id == Track.spotify_id)
-        .where(*base_filter)
-        .group_by(
-            Stream.track_name,
-            Stream.artist_name,
-            Stream.track_id,
-            Stream.artist_id,
-            Track.album_image,
-            track_counts.c.play_count,
-        )
+        .outerjoin(Track, track_counts.c.track_id == Track.spotify_id)
         .order_by(desc(track_counts.c.play_count))
     )
 
@@ -361,37 +317,17 @@ def get_album_detail(
     top_tracks = [
         TopSong(
             track_name=r.track_name,
-            artist_name=r.artist_name,
+            artist_name=artist_name,
             track_id=r.track_id,
-            artist_id=r.artist_id,
+            artist_id=artist_id,
             album_image=r.album_image,
-            play_count=r.play_count,
+            play_count=int(r.play_count),
         )
         for r in track_results
     ]
 
     # Timeline (filter on both artist_id and album_name)
-    if timeframe == "month":
-        date_col = func.date(display_timestamp(Stream.played_at)).label("day")
-        timeline_stmt = select(date_col, func.count(Stream.id).label("play_count")).where(
-            *base_filter
-        )
-        if start and end:
-            timeline_stmt = timeline_stmt.where(Stream.played_at >= start, Stream.played_at < end)
-        timeline_query = timeline_stmt.group_by(date_col).order_by(date_col)
-        granularity = "daily"
-    else:
-        local_played_at = display_timestamp(Stream.played_at)
-        year_col = extract("year", local_played_at).label("yr")
-        month_col = extract("month", local_played_at).label("mo")
-        timeline_stmt = select(
-            year_col, month_col, func.count(Stream.id).label("play_count")
-        ).where(*base_filter)
-        if start and end:
-            timeline_stmt = timeline_stmt.where(Stream.played_at >= start, Stream.played_at < end)
-        timeline_query = timeline_stmt.group_by(year_col, month_col).order_by(year_col, month_col)
-        granularity = "monthly"
-
+    timeline_query, granularity = _build_rollup_timeline_query(album_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
     timeline = _format_timeline_results(timeline_results, granularity)
 
@@ -409,7 +345,7 @@ def get_album_detail(
             artist_name=artist_name,
             artist_id=artist_id,
             album_image=album_image,
-            total_play_count=total_play_count,
+            total_play_count=int(total_play_count),
             unique_tracks_played=int(unique_tracks_played),
         ),
         top_tracks=top_tracks,
@@ -434,13 +370,14 @@ def get_track_detail(
     if not track:
         return None
 
-    start, end = get_date_range(timeframe, base_date)
+    start_date, end_date = get_local_date_range(timeframe, base_date)
+    range_filter = _daily_track_stats_range_filter(start_date, end_date)
+    track_filter = (DailyTrackStats.track_id == track_id, *range_filter)
 
     # Play count (filtered by timeframe)
-    count_stmt = select(func.count(Stream.id)).where(Stream.track_id == track_id)
-    if start and end:
-        count_stmt = count_stmt.where(Stream.played_at >= start, Stream.played_at < end)
-    total_play_count = db.execute(count_stmt).scalar() or 0
+    total_play_count = db.execute(
+        select(func.coalesce(func.sum(DailyTrackStats.play_count), 0)).where(*track_filter)
+    ).scalar_one()
 
     # Get artist_id from streams for this track
     artist_id_result = db.execute(
@@ -451,7 +388,7 @@ def get_track_detail(
     ).scalar_one_or_none()
 
     # Listening timeline (daily for month, monthly otherwise)
-    timeline_query, granularity = _build_timeline(Stream.track_id, track_id, timeframe, start, end)
+    timeline_query, granularity = _build_rollup_timeline_query(track_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
     timeline = _format_timeline_results(timeline_results, granularity)
 
@@ -469,7 +406,7 @@ def get_track_detail(
             album_name=track.album_name,
             album_image=track.album_image,
             duration_ms=track.duration_ms,
-            total_play_count=total_play_count,
+            total_play_count=int(total_play_count),
         ),
         timeline=timeline,
         granularity=granularity,
@@ -487,25 +424,29 @@ def get_track_detail_by_name(
     """Get detail for a track by name + artist (fallback when no Spotify ID)."""
     t0 = time.perf_counter()
 
-    start, end = get_date_range(timeframe, base_date)
+    start_date, end_date = get_local_date_range(timeframe, base_date)
+    range_filter = _daily_track_stats_range_filter(start_date, end_date)
 
-    # Check the track exists in streams
+    # Check the track exists (all-time, not date-filtered — a brand-new page
+    # for an old track should still resolve even if the current timeframe
+    # has no plays).
     exists_stmt = (
-        select(Stream.id)
-        .where(Stream.track_name == track_name, Stream.artist_name == artist_name)
+        select(DailyTrackStats.id)
+        .where(DailyTrackStats.track_name == track_name, DailyTrackStats.artist_name == artist_name)
         .limit(1)
     )
     if not db.execute(exists_stmt).first():
         return None
 
-    # Play count
-    count_stmt = select(func.count(Stream.id)).where(
-        Stream.track_name == track_name,
-        Stream.artist_name == artist_name,
+    name_filter = (
+        DailyTrackStats.track_name == track_name,
+        DailyTrackStats.artist_name == artist_name,
+        *range_filter,
     )
-    if start and end:
-        count_stmt = count_stmt.where(Stream.played_at >= start, Stream.played_at < end)
-    total_play_count = db.execute(count_stmt).scalar() or 0
+
+    total_play_count = db.execute(
+        select(func.coalesce(func.sum(DailyTrackStats.play_count), 0)).where(*name_filter)
+    ).scalar_one()
 
     # Try to get album image from tracks table
     album_info = db.execute(
@@ -527,41 +468,9 @@ def get_track_detail_by_name(
     ).scalar_one_or_none()
 
     # Listening timeline (daily for month, monthly otherwise)
-    granularity = "daily" if timeframe == "month" else "monthly"
-    if granularity == "daily":
-        date_col = func.date(display_timestamp(Stream.played_at)).label("day")
-        timeline_stmt = select(date_col, func.count(Stream.id).label("play_count")).where(
-            Stream.track_name == track_name, Stream.artist_name == artist_name
-        )
-        if start and end:
-            timeline_stmt = timeline_stmt.where(Stream.played_at >= start, Stream.played_at < end)
-        timeline_query = timeline_stmt.group_by(date_col).order_by(date_col)
-        timeline_results = db.execute(timeline_query).all()
-        timeline = [
-            PlayCountOverTime(
-                period=str(r.day),
-                play_count=r.play_count,
-            )
-            for r in timeline_results
-        ]
-    else:
-        local_played_at = display_timestamp(Stream.played_at)
-        year_col = extract("year", local_played_at).label("yr")
-        month_col = extract("month", local_played_at).label("mo")
-        timeline_stmt = select(
-            year_col, month_col, func.count(Stream.id).label("play_count")
-        ).where(Stream.track_name == track_name, Stream.artist_name == artist_name)
-        if start and end:
-            timeline_stmt = timeline_stmt.where(Stream.played_at >= start, Stream.played_at < end)
-        timeline_query = timeline_stmt.group_by(year_col, month_col).order_by(year_col, month_col)
-        timeline_results = db.execute(timeline_query).all()
-        timeline = [
-            PlayCountOverTime(
-                period=f"{int(r.yr)}-{int(r.mo):02d}",
-                play_count=r.play_count,
-            )
-            for r in timeline_results
-        ]
+    timeline_query, granularity = _build_rollup_timeline_query(name_filter, timeframe)
+    timeline_results = db.execute(timeline_query).all()
+    timeline = _format_timeline_results(timeline_results, granularity)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(
@@ -584,7 +493,7 @@ def get_track_detail_by_name(
             album_name=album_info.album_name if album_info else None,
             album_image=album_info.album_image if album_info else None,
             duration_ms=album_info.duration_ms if album_info else None,
-            total_play_count=total_play_count,
+            total_play_count=int(total_play_count),
         ),
         timeline=timeline,
         granularity=granularity,
@@ -617,6 +526,9 @@ def get_related_tracks(
     Note: Sessions are computed in Python over all streams on every call. This
     is fine for personal-scale libraries (sub-100ms for ~100k streams). If it
     becomes a hot path, materialize co-occurrence into a nightly job table.
+
+    Deliberately not rollup-backed: session detection needs individual play
+    timestamps, which daily_track_stats doesn't retain.
     """
     t0 = time.perf_counter()
 
