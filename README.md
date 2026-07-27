@@ -106,6 +106,23 @@ SYNC_MAX_WAIT_SECONDS=25
 
 The local loop uses the same completion-aware sync as the cron endpoint.
 
+## Production Backend Deployment
+
+The API rate-limits per client IP, which requires the ASGI server to resolve the
+real client address. Behind a reverse proxy or load balancer, set:
+
+```bash
+FORWARDED_ALLOW_IPS=<proxy IPs, or * if only the platform proxy can reach the container>
+ALLOWED_HOSTS=<backend hostname(s), comma-separated>
+CRON_SECRET=<non-empty random secret>
+ENVIRONMENT=production
+```
+
+Without `FORWARDED_ALLOW_IPS`, uvicorn ignores `X-Forwarded-For` and every
+caller shares one client key, so per-IP limits become a single shared bucket any
+one client can exhaust for everyone. `CRON_SECRET` and a non-empty
+`ALLOWED_HOSTS` are enforced at startup when `ENVIRONMENT=production`.
+
 ## Backend Response Cache
 
 Dashboard, detail, related-track, and history reads use a bounded in-process

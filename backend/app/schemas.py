@@ -90,7 +90,6 @@ class HealthResponse(BaseModel):
 class SyncStatusResponse(BaseModel):
     status: str
     interval: str
-    endpoint: str
 
 
 class CronSyncResponse(BaseModel):
