@@ -68,7 +68,8 @@ export default function Dashboard({
     error: recentlyPlayedError,
     isLoading: recentlyPlayedLoading,
   } = useSWR<RecentlyPlayedResponse>('/api/top/recently-played?page=1&page_size=10', fetcher, {
-    refreshInterval: 60_000,
+    refreshInterval: 5 * 60_000,
+    revalidateOnFocus: false,
   });
 
   const songs = dashboardData?.songs ?? [];

@@ -24,6 +24,7 @@ export default function RelatedTracks({ trackId, artistId }: RelatedTracksProps)
   const { data, error, isLoading } = useSWR<RelatedTracksResponse>(
     `/api/tracks/${trackId}/related?limit=20`,
     fetcher,
+    { revalidateOnFocus: false },
   );
 
   const visible = useMemo(() => {

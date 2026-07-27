@@ -67,6 +67,10 @@ class TestSongsRoute:
         resp = client.get("/api/top/songs?date=not-a-date")
         assert resp.status_code == 400
 
+    def test_rejects_unbounded_limit(self, client):
+        resp = client.get("/api/top/songs?limit=500")
+        assert resp.status_code == 422
+
 
 class TestArtistsRoute:
     def test_default_params(self, client, db):

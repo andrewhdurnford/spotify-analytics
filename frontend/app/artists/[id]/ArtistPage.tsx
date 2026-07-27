@@ -29,11 +29,23 @@ export default function ArtistPage({ artistId, initialData, initialTimeframe, in
     () => timeframeQuery(currentTimeframe, currentDate),
     [currentTimeframe, currentDate],
   );
+  const initialQuery = useMemo(
+    () => timeframeQuery(initialTimeframe, initialDate),
+    [initialTimeframe, initialDate],
+  );
+  const swrKey = `/api/artists/${artistId}?${query}`;
+  const initialKey = `/api/artists/${artistId}?${initialQuery}`;
+  const isInitialKey = swrKey === initialKey;
 
   const { data, error, isLoading } = useSWR<ArtistDetailResponse>(
-    `/api/artists/${artistId}?${query}`,
+    swrKey,
     fetcher,
-    { fallbackData: initialData },
+    {
+      fallbackData: isInitialKey ? initialData : undefined,
+      keepPreviousData: true,
+      revalidateIfStale: !isInitialKey,
+      revalidateOnFocus: false,
+    },
   );
 
   const handleTimeframeChange = (timeframe: string, date: string | null) => {
