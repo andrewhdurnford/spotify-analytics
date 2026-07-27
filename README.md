@@ -48,6 +48,37 @@ docker compose exec backend sh -c 'pg_isready -d "$DATABASE_URL"'
 docker compose exec backend alembic upgrade head
 ```
 
+6. Rebuild the analytics rollups once the new backend is serving:
+
+```bash
+docker compose exec backend python -m app.scripts.backfill_rollups --commit
+```
+
+## Analytics Rollups
+
+Dashboard totals, rankings, and timelines read from `daily_listening_stats`
+and `daily_track_stats` rather than scanning `streams`. They are maintained
+incrementally in the same transaction as each new `Stream` insert, so normal
+operation needs nothing extra.
+
+Rerun the backfill (idempotent, safe any time) when:
+
+- **Deploying migration `c3d4e5f6a7b8`.** Its in-migration backfill only sees
+  the streams that exist at migration time; the still-running old backend
+  keeps writing plays without the rollup hook until the new code is live.
+  Those plays are only picked up by a post-deploy backfill.
+- **`streams` rows were deleted or edited in place** (duplicate cleanup,
+  export reconciliation). Rollup maintenance is insert-only; the backend logs
+  a warning naming this script when it sees such a flush.
+- **A metadata enrichment run reported a failed rollup recompute.**
+
+```bash
+# Preview counts, write nothing
+docker compose exec backend python -m app.scripts.backfill_rollups
+# Persist
+docker compose exec backend python -m app.scripts.backfill_rollups --commit
+```
+
 ## Verification Commands
 
 Run these to confirm your local setup is healthy.
@@ -91,6 +122,15 @@ Without `FORWARDED_ALLOW_IPS`, uvicorn ignores `X-Forwarded-For` and every
 caller shares one client key, so per-IP limits become a single shared bucket any
 one client can exhaust for everyone. `CRON_SECRET` and a non-empty
 `ALLOWED_HOSTS` are enforced at startup when `ENVIRONMENT=production`.
+
+## Backend Response Cache
+
+Dashboard, detail, related-track, and history reads use a bounded in-process
+TTL cache to reduce repeated database egress. The local playback sync loop
+clears the cache after recording a completed play in that backend process.
+Historical import scripts and multi-worker deployments do not share
+in-process invalidation, so those writes become visible after the endpoint TTL
+expires.
 
 ## Frontend Environment
 

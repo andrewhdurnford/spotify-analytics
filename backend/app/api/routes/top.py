@@ -21,6 +21,8 @@ from ...services import top as top_service
 from ...services.dashboard_cache import (
     ALL_TIME_TTL_SECONDS,
     CURRENTLY_PLAYING_TTL_SECONDS,
+    RECENTLY_PLAYED_TTL_SECONDS,
+    cache_window_key,
     dashboard_cache,
     dashboard_ttl,
 )
@@ -41,7 +43,7 @@ def get_top_songs(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    key = ("songs", timeframe, base_date.date().isoformat(), limit)
+    key = ("songs", timeframe, cache_window_key(timeframe, base_date, date), limit)
     return dashboard_cache.get_or_set(
         key,
         dashboard_ttl(timeframe),
@@ -61,7 +63,7 @@ def get_top_artists(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    key = ("artists", timeframe, base_date.date().isoformat(), limit)
+    key = ("artists", timeframe, cache_window_key(timeframe, base_date, date), limit)
     return dashboard_cache.get_or_set(
         key,
         dashboard_ttl(timeframe),
@@ -81,7 +83,7 @@ def get_top_albums(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    key = ("albums", timeframe, base_date.date().isoformat(), limit)
+    key = ("albums", timeframe, cache_window_key(timeframe, base_date, date), limit)
     return dashboard_cache.get_or_set(
         key,
         dashboard_ttl(timeframe),
@@ -100,7 +102,7 @@ def get_listening_stats(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    key = ("stats", timeframe, base_date.date().isoformat())
+    key = ("stats", timeframe, cache_window_key(timeframe, base_date, date))
     return dashboard_cache.get_or_set(
         key,
         dashboard_ttl(timeframe),
@@ -119,7 +121,7 @@ def get_timeline(
     db: Session = Depends(get_db),
 ):
     base_date = parse_date_param(date)
-    key = ("timeline", timeframe, base_date.date().isoformat())
+    key = ("timeline", timeframe, cache_window_key(timeframe, base_date, date))
     return dashboard_cache.get_or_set(
         key,
         dashboard_ttl(timeframe),
@@ -153,7 +155,17 @@ def get_recently_played(
     db: Session = Depends(get_db),
 ):
     parsed_start_date = parse_date_param(start_date) if start_date else None
-    return top_service.get_recently_played(db, parsed_start_date, page, page_size)
+    key = (
+        "recently-played",
+        parsed_start_date.isoformat() if parsed_start_date else None,
+        page,
+        page_size,
+    )
+    return dashboard_cache.get_or_set(
+        key,
+        RECENTLY_PLAYED_TTL_SECONDS,
+        lambda: top_service.get_recently_played(db, parsed_start_date, page, page_size),
+    )
 
 
 @router.get(

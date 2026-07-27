@@ -37,6 +37,10 @@ export default function SongPage({ songId, isNameFallback, initialData, initialT
     () => timeframeQuery(currentTimeframe, currentDate),
     [currentTimeframe, currentDate],
   );
+  const initialQuery = useMemo(
+    () => timeframeQuery(initialTimeframe, initialDate),
+    [initialTimeframe, initialDate],
+  );
 
   const swrKey = useMemo(() => {
     if (isNameFallback) {
@@ -47,11 +51,26 @@ export default function SongPage({ songId, isNameFallback, initialData, initialT
     }
     return `/api/tracks/${songId}?${query}`;
   }, [songId, isNameFallback, currentTimeframe, currentDate, query]);
+  const initialKey = useMemo(() => {
+    if (isNameFallback) {
+      const [trackName, artistName] = decodeURIComponent(songId).split('--');
+      const p = new URLSearchParams({ timeframe: initialTimeframe, track_name: trackName, artist_name: artistName });
+      if (initialDate) p.set('date', initialDate);
+      return `/api/tracks/by-name?${p.toString()}`;
+    }
+    return `/api/tracks/${songId}?${initialQuery}`;
+  }, [songId, isNameFallback, initialTimeframe, initialDate, initialQuery]);
+  const isInitialKey = swrKey === initialKey;
 
   const { data, error, isLoading } = useSWR<TrackDetailResponse>(
     swrKey,
     fetcher,
-    { fallbackData: initialData },
+    {
+      fallbackData: isInitialKey ? initialData : undefined,
+      keepPreviousData: true,
+      revalidateIfStale: !isInitialKey,
+      revalidateOnFocus: false,
+    },
   );
 
   const handleTimeframeChange = (timeframe: string, date: string | null) => {

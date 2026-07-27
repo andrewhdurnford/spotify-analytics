@@ -6,12 +6,17 @@ predictable regardless of how many distinct query-parameter combinations
 callers request (arbitrary timeframe/date/limit/track_id combinations
 cannot grow the cache without bound -- once `maxsize` entries are held, the
 least-recently-used entry is evicted to make room for a new one).
+
+This cache intentionally stays process-local. Local playback sync clears the
+current process after writes; out-of-process imports and multi-worker
+deployments rely on the short TTLs below for freshness.
 """
 
 import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Hashable, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime
 from threading import Lock
 from time import monotonic
 from typing import TypeVar
@@ -24,7 +29,9 @@ _MISS = object()
 ALL_TIME_TTL_SECONDS = 15 * 60
 FILTERED_TTL_SECONDS = 60
 CURRENTLY_PLAYING_TTL_SECONDS = 12
-RELATED_TRACKS_TTL_SECONDS = 15 * 60
+RECENTLY_PLAYED_TTL_SECONDS = 60
+DETAIL_TTL_SECONDS = 5 * 60
+RELATED_TRACKS_TTL_SECONDS = 60 * 60
 
 DEFAULT_MAXSIZE = 250
 
@@ -125,6 +132,7 @@ class DashboardCache:
         """Return the unexpired cached value for `key`, or `_MISS`."""
         now = self._clock()
         with self._lock:
+            self._delete_expired(now)
             cached = self._entries.get(key)
             if cached is not None and cached[0] > now:
                 self._entries.move_to_end(key)
@@ -178,6 +186,13 @@ class DashboardCache:
         with self._lock:
             self._entries.clear()
 
+    def _delete_expired(self, now: float) -> None:
+        expired_keys = [
+            key for key, (expires_at, _) in self._entries.items() if expires_at <= now
+        ]
+        for key in expired_keys:
+            self._entries.pop(key, None)
+
 
 dashboard_cache = DashboardCache()
 
@@ -186,3 +201,17 @@ def dashboard_ttl(timeframe: str) -> int:
     if timeframe == "all":
         return ALL_TIME_TTL_SECONDS
     return FILTERED_TTL_SECONDS
+
+
+def detail_ttl(timeframe: str) -> int:
+    if timeframe == "all":
+        return DETAIL_TTL_SECONDS
+    return dashboard_ttl(timeframe)
+
+
+def cache_window_key(timeframe: str, base_date: datetime, date_param: str | None) -> str:
+    if timeframe == "all":
+        return "all"
+    if date_param:
+        return base_date.isoformat()
+    return "current"

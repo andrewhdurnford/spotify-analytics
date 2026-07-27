@@ -11,24 +11,30 @@ interface HistoryPageProps {
   initialData: RecentlyPlayedResponse;
 }
 
+function recentlyPlayedKey(page: number, startDate = '') {
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: '100',
+  });
+  if (startDate) {
+    params.set('start_date', startDate);
+  }
+  return `/api/top/recently-played?${params.toString()}`;
+}
+
 export default function HistoryPage({ initialData }: HistoryPageProps) {
   const [startDate, setStartDate] = useState('');
   const [page, setPage] = useState(1);
 
-  const swrKey = useMemo(() => {
-    const params = new URLSearchParams({
-      page: String(page),
-      page_size: '100',
-    });
-    if (startDate) {
-      params.set('start_date', startDate);
-    }
-    return `/api/top/recently-played?${params.toString()}`;
-  }, [page, startDate]);
+  const swrKey = useMemo(() => recentlyPlayedKey(page, startDate), [page, startDate]);
+  const initialKey = useMemo(() => recentlyPlayedKey(1), []);
+  const isInitialKey = swrKey === initialKey;
 
   const { data, error, isLoading } = useSWR<RecentlyPlayedResponse>(swrKey, fetcher, {
-    fallbackData: initialData,
+    fallbackData: isInitialKey ? initialData : undefined,
     keepPreviousData: true,
+    revalidateIfStale: !isInitialKey,
+    revalidateOnFocus: false,
   });
 
   const history = data ?? initialData;

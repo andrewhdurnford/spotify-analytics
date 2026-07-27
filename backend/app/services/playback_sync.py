@@ -53,8 +53,18 @@ async def store_completed_play(
         warn=warn,
         report_issue=report_issue,
     )
+    # db.commit() flushes the new Stream row and, via the before_flush hook
+    # registered in app.models, the matching daily_listening_stats /
+    # daily_track_stats rollup rows in the same transaction. If rollup
+    # maintenance raises, the flush fails and nothing here is persisted —
+    # roll back explicitly so a half-applied attempt doesn't linger on the
+    # session for the next request that reuses it.
     db.add(_stream_from_playback(track, played_at))
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     dashboard_cache.clear()
 
     return StoreCompletedPlayResult(

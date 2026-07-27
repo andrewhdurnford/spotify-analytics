@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Artist, Stream, Track
 from app.services.ingest_errors import IssueReporter, spotify_api_issue
+from app.services.rollups import rebuild_rollups_for_tracks
 
 BATCH_SIZE = 50
 SPOTIFY_ARTISTS_URL = "https://api.spotify.com/v1/artists"
@@ -97,8 +98,11 @@ def upsert_tracks_from_spotify(
     headers = {"Authorization": f"Bearer {spotify_token}"}
     upserted = 0
 
+    enriched_track_ids: list[str] = []
+
     for i in range(0, len(track_ids), BATCH_SIZE):
         batch = track_ids[i : i + BATCH_SIZE]
+        batch_track_ids: list[str] = []
         try:
             response = http_get(
                 SPOTIFY_TRACKS_URL,
@@ -117,9 +121,11 @@ def upsert_tracks_from_spotify(
                     continue
 
                 _upsert_track(db, track_data)
+                batch_track_ids.append(spotify_id)
                 upserted += 1
 
             db.commit()
+            enriched_track_ids.extend(batch_track_ids)
         except Exception as exc:
             issue = spotify_api_issue(
                 operation="spotify_track_metadata",
@@ -133,6 +139,28 @@ def upsert_tracks_from_spotify(
                 warn(issue.message)
             db.rollback()
             continue
+
+    if enriched_track_ids:
+        # Track duration and Stream.artist_id both feed denormalized rollup
+        # columns/keys. Recompute once after all successful batches so metadata
+        # enrichment cannot leave historical analytics stale. Scoped to the
+        # tracks actually enriched — no other stream's rollup contribution can
+        # have changed — so cost is O(plays of those tracks), not O(history).
+        # The recompute shares a PostgreSQL advisory lock with incremental
+        # Stream writes.
+        try:
+            rebuild_rollups_for_tracks(db, enriched_track_ids)
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            # Per-batch Track/Stream writes above are already committed, so the
+            # DB is left with fresh metadata and stale rollups. Say so — the
+            # repair is a full rebuild.
+            raise RuntimeError(
+                "spotify track metadata was committed but the rollup recompute failed; "
+                "daily_listening_stats/daily_track_stats are now stale. Rerun "
+                "`python -m app.scripts.backfill_rollups --commit` to repair."
+            ) from exc
 
     return upserted
 

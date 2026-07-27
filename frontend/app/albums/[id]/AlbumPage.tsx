@@ -37,7 +37,6 @@ export default function AlbumPage({
     () => timeframeQuery(currentTimeframe, currentDate),
     [currentTimeframe, currentDate],
   );
-
   const swrKey = useMemo(() => {
     const p = new URLSearchParams({
       artist_id: artistId,
@@ -47,11 +46,26 @@ export default function AlbumPage({
     if (currentDate) p.set('date', currentDate);
     return `/api/albums/by-name?${p.toString()}`;
   }, [artistId, albumName, currentTimeframe, currentDate]);
+  const initialKey = useMemo(() => {
+    const p = new URLSearchParams({
+      artist_id: artistId,
+      album_name: albumName,
+      timeframe: initialTimeframe,
+    });
+    if (initialDate) p.set('date', initialDate);
+    return `/api/albums/by-name?${p.toString()}`;
+  }, [artistId, albumName, initialTimeframe, initialDate]);
+  const isInitialKey = swrKey === initialKey;
 
   const { data, error, isLoading } = useSWR<AlbumDetailResponse>(
     swrKey,
     fetcher,
-    { fallbackData: initialData },
+    {
+      fallbackData: isInitialKey ? initialData : undefined,
+      keepPreviousData: true,
+      revalidateIfStale: !isInitialKey,
+      revalidateOnFocus: false,
+    },
   );
 
   const handleTimeframeChange = (timeframe: string, date: string | null) => {
