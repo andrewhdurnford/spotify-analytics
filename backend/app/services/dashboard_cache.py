@@ -1,7 +1,7 @@
 """Small in-process, bounded TTL/LRU cache used across the API.
 
-Used for dashboard aggregate queries, the currently-playing lookup, and
-related-track calculations. A single bounded pool keeps total memory use
+Used for dashboard aggregate queries and the currently-playing lookup. A
+single bounded pool keeps total memory use
 predictable regardless of how many distinct query-parameter combinations
 callers request (arbitrary timeframe/date/limit/track_id combinations
 cannot grow the cache without bound -- once `maxsize` entries are held, the
@@ -31,7 +31,6 @@ FILTERED_TTL_SECONDS = 60
 CURRENTLY_PLAYING_TTL_SECONDS = 12
 RECENTLY_PLAYED_TTL_SECONDS = 60
 DETAIL_TTL_SECONDS = 5 * 60
-RELATED_TRACKS_TTL_SECONDS = 60 * 60
 
 DEFAULT_MAXSIZE = 250
 

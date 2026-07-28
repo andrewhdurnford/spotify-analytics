@@ -1,6 +1,7 @@
 """Focused tests for app.services.detail query behavior."""
 
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 from sqlalchemy.orm import Session
 
@@ -12,6 +13,7 @@ from app.services.detail import (
     get_track_detail,
     get_track_detail_by_name,
 )
+from app.services.related_tracks_rollup import rebuild_related_tracks_rollup
 
 
 def _seed_detail_data(db: Session):
@@ -356,7 +358,12 @@ def _seed_related_data(db: Session):
       Session 4 (Jan 5):  far-track only                 (no cooc with target)
 
     Expected: near-A and near-B both have cooc=3 (every session with target).
-    same-artist has cooc=2 — below the default min_support of 3, so dropped.
+    same-artist has cooc=2 — below the build-time DEFAULT_MIN_SUPPORT of 3,
+    so it never earns a `track_cooccurrences` row.
+
+    `get_related_tracks` reads the rollup rather than `streams`, so the
+    rebuild below is part of the fixture: without it the seeded plays are
+    invisible to the query.
     """
     artist_target = Artist(spotify_id="art-target", name="Target Artist", genres=[])
     artist_other = Artist(spotify_id="art-other", name="Other Artist", genres=[])
@@ -403,6 +410,9 @@ def _seed_related_data(db: Session):
     db.add_all([artist_target, artist_other, artist_far, *tracks, *streams])
     db.commit()
 
+    rebuild_related_tracks_rollup(db)
+    db.commit()
+
 
 class TestGetRelatedTracks:
     def test_returns_top_cooccurring_tracks_sorted_by_score(self, db: Session):
@@ -423,26 +433,16 @@ class TestGetRelatedTracks:
             assert r.artist_name  # populated from Track or Stream fallback
             assert 0.0 < r.score <= 1.0
 
-    def test_min_support_can_be_lowered_to_surface_more(self, db: Session):
-        _seed_related_data(db)
-
-        result = get_related_tracks(db, track_id="t-target", limit=10, min_support=2)
-
-        assert result is not None
-        ids = [r.track_id for r in result.related]
-        assert "t-same" in ids  # now surfaced (cooc=2)
-        same = next(r for r in result.related if r.track_id == "t-same")
-        assert same.cooc_sessions == 2
-        # Target has 4 sessions (0,1,2,3); same-artist appears in 2 (sessions 2 and 3).
-        assert same.cooc_rate == 0.5
-        assert same.artist_id == "art-target"  # frontend uses this for toggle
-
     def test_target_track_not_returned_in_its_own_related_list(self, db: Session):
-        _seed_related_data(db)
+        # min_support lowered to 1 so every co-occurrence in the fixture is
+        # persisted -- the target still must not appear among its own results.
+        with patch("app.services.related_tracks_rollup.DEFAULT_MIN_SUPPORT", 1):
+            _seed_related_data(db)
 
-        result = get_related_tracks(db, track_id="t-target", limit=10, min_support=1)
+        result = get_related_tracks(db, track_id="t-target", limit=10)
 
         assert result is not None
+        assert result.related  # sanity: the lowered floor did surface pairs
         assert all(r.track_id != "t-target" for r in result.related)
 
     def test_limit_caps_results(self, db: Session):

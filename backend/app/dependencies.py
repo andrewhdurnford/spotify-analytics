@@ -171,7 +171,7 @@ def require_related_tracks_rate_limit(request: Request) -> None:
     _enforce_rate_limit(related_tracks_limiter, _client_key(request))
 
 
-def require_cron_rate_limit(request: Request, authorization: str = Header(None)) -> None:
+def _enforce_cron_rate_limit(key: str, authorization: str | None) -> None:
     """Throttle cron attempts, with a separate budget once authenticated.
 
     The limiter necessarily runs before the endpoint's own auth check, so a
@@ -182,6 +182,23 @@ def require_cron_rate_limit(request: Request, authorization: str = Header(None))
     cron's allowance.
     """
     if cron_token_is_valid(authorization):
-        _enforce_rate_limit(cron_authenticated_limiter, _client_key(request))
+        _enforce_rate_limit(cron_authenticated_limiter, key)
         return
-    _enforce_rate_limit(cron_limiter, _client_key(request))
+    _enforce_rate_limit(cron_limiter, key)
+
+
+def require_cron_rate_limit(request: Request, authorization: str = Header(None)) -> None:
+    _enforce_cron_rate_limit(_client_key(request), authorization)
+
+
+def require_cron_route_rate_limit(request: Request, authorization: str = Header(None)) -> None:
+    """Per-route variant of `require_cron_rate_limit`.
+
+    Cron endpoints are on independent external schedules with wildly
+    different cadences (playback sync runs every minute; the related-tracks
+    rebuild hourly). Keying on the client alone would put them in one shared
+    bucket, so a misconfigured rebuild schedule could eat the real sync job's
+    budget. Same two-bucket authenticated/unauthenticated split, scoped by
+    matched route (see `_route_key`).
+    """
+    _enforce_cron_rate_limit(f"{_client_key(request)}:{_route_key(request)}", authorization)

@@ -2,15 +2,18 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime, timedelta
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .api.routes import detail, top
 from .config import Settings, settings
-from .dependencies import require_cron_rate_limit
+from .database import SessionLocal, get_db
+from .dependencies import require_cron_rate_limit, require_cron_route_rate_limit
 from .schemas import (
     CronSyncResponse,
     ErrorResponse,
@@ -19,6 +22,10 @@ from .schemas import (
     SyncStatusResponse,
 )
 from .services.cron_auth import cron_token_is_valid
+from .services.related_tracks_rollup import (
+    get_last_rebuilt_at,
+    rebuild_related_tracks_rollup,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -197,6 +204,18 @@ app.include_router(top.router, prefix="/api/top", tags=["top"])
 app.include_router(detail.router, prefix="/api", tags=["detail"])
 
 
+def _unauthorized_cron() -> HTTPException:
+    return HTTPException(
+        status_code=401,
+        detail={
+            "error": {
+                "code": "UNAUTHORIZED",
+                "message": "Invalid or missing authorization token.",
+            }
+        },
+    )
+
+
 @app.post(
     "/api/cron/sync-tracks",
     response_model=CronSyncResponse,
@@ -209,15 +228,7 @@ async def cron_sync_tracks(authorization: str = Header(None)):
     """
     if not cron_token_is_valid(authorization):
         logger.warning("Unauthorized cron attempt")
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Invalid or missing authorization token.",
-                }
-            },
-        )
+        raise _unauthorized_cron()
 
     from .tasks.sync_recent_tracks import fetch_and_store_recent_tracks
 
@@ -239,6 +250,81 @@ async def cron_sync_tracks(authorization: str = Header(None)):
         ) from e
 
 
+# A rebuild is a full scan of `streams`; the external schedule is hourly, so
+# anything arriving sooner than this is a double-fire or a misconfiguration.
+MIN_RELATED_REBUILD_INTERVAL = timedelta(minutes=55)
+
+
+def run_related_tracks_rebuild() -> None:
+    """Rebuild the related-tracks rollup on its own DB session.
+
+    Opens its own `SessionLocal` rather than taking one from `Depends(get_db)`:
+    that session is closed as soon as the request completes (see
+    `database.get_db`), which is *before* this background task runs.
+    """
+    db = SessionLocal()
+    try:
+        stats = rebuild_related_tracks_rollup(db)
+        if stats.skipped_locked:
+            db.rollback()
+            logger.info("Related-tracks rebuild skipped; another rebuild holds the lock")
+            return
+        db.commit()
+        logger.info(
+            "Related-tracks rollup rebuilt: %d streams, %d sessions, %d tracks, %d pairs",
+            stats.streams_processed,
+            stats.sessions,
+            stats.track_rows,
+            stats.pair_rows,
+        )
+    except Exception:
+        db.rollback()
+        logger.exception("Related-tracks rollup rebuild failed")
+    finally:
+        db.close()
+
+
+@app.post(
+    "/api/cron/rebuild-related-tracks",
+    response_model=CronSyncResponse,
+    status_code=202,
+    dependencies=[Depends(require_cron_route_rate_limit)],
+)
+def cron_rebuild_related_tracks(
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Recompute the related-tracks co-occurrence rollup (external cron, hourly).
+
+    A plain `def` (not `async def`) so FastAPI runs it in the threadpool -- the
+    throttle check below touches the database, and an async handler would block
+    the event loop for every other request while it did.
+
+    Always answers 202 immediately and does the actual rebuild in a background
+    task, because a rebuild scans every `streams` row and would otherwise sit
+    well past the request timeout. `status` distinguishes the two outcomes:
+    "accepted" (rebuild enqueued) or "skipped" (ran too recently).
+    """
+    if not cron_token_is_valid(authorization):
+        logger.warning("Unauthorized related-tracks rebuild attempt")
+        raise _unauthorized_cron()
+
+    last_rebuilt_at = get_last_rebuilt_at(db)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    if last_rebuilt_at and now - last_rebuilt_at < MIN_RELATED_REBUILD_INTERVAL:
+        # First line of defense against an over-eager schedule; the builder's
+        # `pg_try_advisory_xact_lock` is the second.
+        logger.info("Related-tracks rebuild skipped; last completed %s", last_rebuilt_at)
+        return CronSyncResponse(
+            status="skipped",
+            message=f"Rollup was rebuilt at {last_rebuilt_at.isoformat()}Z; skipping.",
+        )
+
+    background_tasks.add_task(run_related_tracks_rebuild)
+    return CronSyncResponse(status="accepted", message="Related-tracks rebuild started.")
+
+
 @app.get("/", response_model=MessageResponse)
 def read_root():
     return MessageResponse(message="Spotify Analytics API")
@@ -250,13 +336,19 @@ def health_check():
 
 
 @app.get("/api/sync-status", response_model=SyncStatusResponse)
-def sync_status():
+def sync_status(db: Session = Depends(get_db)):
     """Check the last sync status.
 
-    Deliberately omits the cron endpoint path -- no reason to publish that
+    `related_tracks_rollup_last_rebuilt_at` is exposed so a broken or
+    forgotten rebuild schedule degrades visibly: without it, the only symptom
+    of a dead cron job is related-track results quietly going stale (or never
+    appearing at all, if the post-migration backfill was skipped).
+
+    Deliberately omits the cron endpoint paths -- no reason to publish those
     to unauthenticated callers.
     """
     return SyncStatusResponse(
         status="Syncing via external cron service",
         interval="Every minute",
+        related_tracks_rollup_last_rebuilt_at=get_last_rebuilt_at(db),
     )

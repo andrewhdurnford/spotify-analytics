@@ -12,12 +12,7 @@ from ...schemas import (
     TrackDetailResponse,
 )
 from ...services import detail as detail_service
-from ...services.dashboard_cache import (
-    RELATED_TRACKS_TTL_SECONDS,
-    cache_window_key,
-    dashboard_cache,
-    detail_ttl,
-)
+from ...services.dashboard_cache import cache_window_key, dashboard_cache, detail_ttl
 from ..params import (
     MAX_ALBUM_NAME_LENGTH,
     MAX_LIMIT,
@@ -226,18 +221,14 @@ def get_related_tracks(
     cosine similarity over session-membership and require at least 3
     co-occurring sessions to surface.
 
-    Results are cached (keyed by track_id + limit) for
-    `RELATED_TRACKS_TTL_SECONDS` since the underlying computation walks the
-    full session history on every call. Misses (unknown track_id -> 404)
-    aren't cached, so bogus IDs can't occupy slots in the shared pool.
+    Deliberately *not* cached, unlike the other detail routes. The co-occurrence
+    rollup (`app.services.related_tracks_rollup`) reduces this to two indexed
+    lookups, so a cache entry would buy nothing while occupying a slot in the
+    shared bounded pool -- evicting dashboard aggregates that actually are
+    expensive -- and stacking up to an hour of staleness on top of the rollup's
+    own rebuild interval.
     """
-    key = ("related-tracks", track_id, limit)
-    result = dashboard_cache.get_or_set(
-        key,
-        RELATED_TRACKS_TTL_SECONDS,
-        lambda: detail_service.get_related_tracks(db, track_id, limit=limit),
-        cache_none=False,
-    )
+    result = detail_service.get_related_tracks(db, track_id, limit=limit)
     if result is None:
         raise HTTPException(
             status_code=404,

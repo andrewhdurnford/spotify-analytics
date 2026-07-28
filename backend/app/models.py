@@ -153,6 +153,65 @@ class DailyTrackStats(Base):
     )
 
 
+class TrackSessionCount(Base):
+    """Rollup: how many listening sessions each track appears in.
+
+    Denominator for the related-tracks cosine score. Rebuilt wholesale by
+    `app.services.related_tracks_rollup.rebuild_related_tracks_rollup`; never
+    maintained incrementally (see that module's docstring for why).
+    """
+
+    __tablename__ = "track_session_counts"
+
+    track_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    session_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class TrackCooccurrence(Base):
+    """Rollup: how many sessions contain both `track_id` and `other_track_id`.
+
+    Stored bidirectionally — a co-occurring pair (A, B) produces both an
+    (A, B) and a (B, A) row — so a read is a single equality lookup on
+    `track_id` rather than an `OR` across two columns. Rows are filtered to
+    a minimum support and capped per `track_id` at build time, which keeps
+    the table small enough for the duplication to be the cheaper option.
+    """
+
+    __tablename__ = "track_cooccurrences"
+
+    # No `index=True` here, unlike the older tables' surrogate keys: the
+    # primary key is already indexed, and this is the largest table in the
+    # schema after `streams` -- a duplicate index on it is pure write
+    # amplification on every rebuild.
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # No standalone index on either column either: the unique constraint's own
+    # index already serves the leading-column (`track_id`) lookup this table
+    # exists for, and nothing filters on `other_track_id` (it joins to
+    # track_session_counts' primary key).
+    track_id: Mapped[str] = mapped_column(String(100))
+    other_track_id: Mapped[str] = mapped_column(String(100))
+    cooc_sessions: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("track_id", "other_track_id", name="uix_track_cooccurrence_pair"),
+    )
+
+
+class RelatedTracksRollupMeta(Base):
+    """Single-row bookkeeping for the related-tracks rollup rebuild.
+
+    Holds the completion time of the last successful rebuild, used to
+    self-throttle the cron trigger and to surface a stale/forgotten schedule
+    on `/api/sync-status`.
+    """
+
+    __tablename__ = "related_tracks_rollup_meta"
+
+    # Always 1: this table holds exactly one sentinel row.
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_rebuilt_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+
+
 # Stream columns the rollups derive their keys, dates, and totals from. An
 # in-place UPDATE of any of these invalidates the rollup rows the old values
 # were folded into.

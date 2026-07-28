@@ -157,7 +157,13 @@ class TestRelatedTracksBoundsAndCaching:
         resp = client.get(f"/api/tracks/{'t' * 101}/related")
         assert resp.status_code == 422
 
-    def test_result_is_served_from_cache_on_repeat_call(self, client, db):
+    def test_every_call_hits_the_service_and_never_the_cache(self, client, db):
+        """This route is deliberately uncached (see the route's docstring).
+
+        It reads a precomputed rollup, so a cache entry would only burn a slot
+        in the shared bounded pool and add staleness. If a `get_or_set` wrapper
+        is ever reintroduced here, this fails.
+        """
         _seed(db)
         with patch(
             "app.services.detail.get_related_tracks",
@@ -165,28 +171,9 @@ class TestRelatedTracksBoundsAndCaching:
         ) as mock_get_related:
             first = client.get("/api/tracks/t1/related")
             second = client.get("/api/tracks/t1/related")
+
             assert first.status_code == 200
             assert second.status_code == 200
             assert first.json() == second.json()
-            mock_get_related.assert_called_once()
-
-    def test_cache_bypassed_after_clear(self, client, db):
-        _seed(db)
-        with patch(
-            "app.services.detail.get_related_tracks",
-            wraps=_real_get_related_tracks,
-        ) as mock_get_related:
-            client.get("/api/tracks/t1/related")
-            dashboard_cache.clear()
-            client.get("/api/tracks/t1/related")
             assert mock_get_related.call_count == 2
-
-    def test_different_limit_is_a_different_cache_key(self, client, db):
-        _seed(db)
-        with patch(
-            "app.services.detail.get_related_tracks",
-            wraps=_real_get_related_tracks,
-        ) as mock_get_related:
-            client.get("/api/tracks/t1/related?limit=5")
-            client.get("/api/tracks/t1/related?limit=10")
-            assert mock_get_related.call_count == 2
+        assert len(dashboard_cache) == 0
