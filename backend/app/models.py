@@ -15,6 +15,7 @@ from sqlalchemy import (
     event,
     func,
     inspect,
+    text,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
@@ -85,6 +86,26 @@ class Stream(Base):
         UniqueConstraint("track_name", "artist_name", "played_at", name="uix_name_artist_playedat"),
         Index("ix_streams_played_at_track_id", "played_at", "track_id"),
         Index("ix_streams_played_at_artist_id", "played_at", "artist_id"),
+        # Serves the display-metadata lookup in services/detail.py
+        # get_related_tracks: max(id) per track_id, filtered to rows that have
+        # an artist_id. Carrying `id` in the index makes that an index-only
+        # scan; without it the planner bitmap-scans uix_trackid_playedat and
+        # heap-fetches every matching row just to read `id`. Postgres still
+        # reads one index tuple per stream (there is no per-group max
+        # short-circuit), so this trades heap I/O away, it does not make the
+        # scan sublinear. Partial because the query always filters
+        # artist_id IS NOT NULL, which keeps the index off loose streams.
+        #
+        # The index-only scan depends on a current visibility map: on an
+        # unvacuumed table the same plan degrades to a heap fetch per tuple
+        # and is worse than the bitmap plan it replaces.
+        Index(
+            "ix_streams_track_id_id_artist_not_null",
+            "track_id",
+            "id",
+            postgresql_where=text("artist_id IS NOT NULL"),
+            sqlite_where=text("artist_id IS NOT NULL"),
+        ),
     )
 
 
