@@ -531,6 +531,12 @@ def get_related_tracks(
 
     An empty `related` list is also what a track legitimately returns before
     the first rollup build has run (see migration d4e5f6a7b8c9).
+
+    Display metadata (artist_id and the track/artist name fallbacks) comes from
+    the most recent qualifying stream per track — highest streams.id, matching
+    the last-seen-wins convention in services/rollups.py. This is a behavior
+    change: the previous query kept whichever row the database happened to
+    return first, which was unordered in practice.
     """
     t0 = time.perf_counter()
 
@@ -588,21 +594,28 @@ def get_related_tracks(
     meta_by_id = {r.spotify_id: r for r in meta_rows}
 
     # Pull artist_id (and fallback name fields) from streams — Track has no
-    # artist_id column.
+    # artist_id column. Aggregate to the newest qualifying stream id per track
+    # first so the outer select returns at most one row per track_id instead of
+    # every matching stream row (previously ~2.9k rows fetched per call to use
+    # at most `limit` of them).
+    latest_stream_ids = (
+        select(func.max(Stream.id))
+        .where(Stream.track_id.in_(top_ids))
+        .where(Stream.artist_id.isnot(None))
+        .group_by(Stream.track_id)
+        .scalar_subquery()
+    )
     stream_rows = db.execute(
         select(
             Stream.track_id,
             Stream.artist_id,
             Stream.track_name,
             Stream.artist_name,
-        )
-        .where(Stream.track_id.in_(top_ids))
-        .where(Stream.artist_id.isnot(None))
+        ).where(Stream.id.in_(latest_stream_ids))
     ).all()
-    stream_info: dict[str, tuple[str | None, str, str]] = {}
-    for r in stream_rows:
-        if r.track_id not in stream_info:
-            stream_info[r.track_id] = (r.artist_id, r.track_name, r.artist_name)
+    stream_info: dict[str, tuple[str | None, str, str]] = {
+        r.track_id: (r.artist_id, r.track_name, r.artist_name) for r in stream_rows
+    }
 
     related: list[RelatedTrack] = []
     for tid, cooc, score in top:

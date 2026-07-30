@@ -453,6 +453,43 @@ class TestGetRelatedTracks:
         assert result is not None
         assert len(result.related) == 1
 
+    def test_metadata_comes_from_most_recent_stream_per_track(self, db: Session):
+        _seed_related_data(db)
+        # t-nearA already has three streams on art-other. Add a newer one that
+        # re-attributes it, plus an even newer row with no artist_id at all.
+        # The rollup is deliberately not rebuilt afterwards: display metadata
+        # is read straight from `streams`, independent of the co-occurrence
+        # tables, and this asserts exactly that lookup.
+        later = datetime(2025, 2, 1, 12, 0)
+        db.add(
+            Stream(
+                track_name="Near A",
+                artist_name="Reattributed",
+                played_at=later,
+                track_id="t-nearA",
+                artist_id="art-far",
+            )
+        )
+        db.add(
+            Stream(
+                track_name="Near A",
+                artist_name="No Artist Id",
+                played_at=later + timedelta(days=1),
+                track_id="t-nearA",
+                artist_id=None,
+            )
+        )
+        db.commit()
+
+        result = get_related_tracks(db, track_id="t-target", limit=10)
+
+        assert result is not None
+        near_a = [r for r in result.related if r.track_id == "t-nearA"]
+        assert len(near_a) == 1  # one row per track_id, never a duplicate
+        # Highest streams.id with a non-NULL artist_id wins; the newer NULL row
+        # is filtered out rather than blanking the artist.
+        assert near_a[0].artist_id == "art-far"
+
     def test_unknown_track_returns_none(self, db: Session):
         _seed_related_data(db)
 
