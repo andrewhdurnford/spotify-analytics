@@ -1,5 +1,7 @@
 """Pydantic response models for the API."""
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 # --- Top items ---
@@ -90,6 +92,9 @@ class HealthResponse(BaseModel):
 class SyncStatusResponse(BaseModel):
     status: str
     interval: str
+    # Naive UTC completion time of the last related-tracks rollup rebuild.
+    # None means it has never run (post-migration backfill still pending).
+    related_tracks_rollup_last_rebuilt_at: datetime | None = None
 
 
 class CronSyncResponse(BaseModel):

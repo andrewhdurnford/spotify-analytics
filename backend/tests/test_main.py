@@ -2,6 +2,8 @@
 
 import asyncio
 import os
+from contextlib import contextmanager
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
@@ -16,6 +18,13 @@ from app.main import (
     cors_origins_for,
     docs_urls_for,
 )
+from app.models import Stream, Track
+from app.services.related_tracks_rollup import (
+    get_last_rebuilt_at,
+    rebuild_related_tracks_rollup,
+)
+
+from .conftest import TestingSessionLocal
 
 VALID_DB_URL = "postgresql://test:test@localhost/test?sslmode=require"
 
@@ -147,6 +156,139 @@ class TestCronSyncTracks:
                 headers={"Authorization": "Bearer é".encode("latin-1")},
             )
             assert resp.status_code == 401
+
+
+class TestCronRebuildRelatedTracks:
+    """The rollup rebuild trigger: auth, 202-then-background, self-throttle."""
+
+    AUTH = {"Authorization": "Bearer test-secret-123"}
+
+    @contextmanager
+    def _authorized(self):
+        """Valid CRON_SECRET, with the background task on the test database.
+
+        `run_related_tracks_rebuild` deliberately opens its own session (a
+        `Depends(get_db)` one is closed before the background task runs), so
+        the test has to point that sessionmaker at the test engine.
+        """
+        with (
+            patch("app.services.cron_auth.settings", Settings(cron_secret="test-secret-123")),
+            patch("app.main.SessionLocal", TestingSessionLocal),
+        ):
+            yield
+
+    def _seed_one_session(self, db):
+        db.add(Track(spotify_id="r1", name="R1", artist_name="A"))
+        db.add(
+            Stream(
+                track_name="R1",
+                artist_name="A",
+                played_at=datetime(2025, 5, 1, 12, 0),
+                track_id="r1",
+            )
+        )
+        db.commit()
+
+    def test_rejects_missing_auth(self, client):
+        resp = client.post("/api/cron/rebuild-related-tracks")
+        assert resp.status_code == 401
+
+    def test_rejects_wrong_token(self, client):
+        with patch("app.services.cron_auth.settings", Settings(cron_secret="test-secret-123")):
+            resp = client.post(
+                "/api/cron/rebuild-related-tracks",
+                headers={"Authorization": "Bearer wrong-secret"},
+            )
+        assert resp.status_code == 401
+
+    def test_accepts_and_runs_the_rebuild_in_the_background(self, client, db):
+        self._seed_one_session(db)
+
+        with self._authorized():
+            resp = client.post("/api/cron/rebuild-related-tracks", headers=self.AUTH)
+
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "accepted"
+        # TestClient runs background tasks before returning, so by now the
+        # rebuild has committed.
+        assert get_last_rebuilt_at(db) is not None
+
+    def test_second_call_within_the_throttle_window_is_skipped(self, client, db):
+        self._seed_one_session(db)
+
+        with self._authorized():
+            first = client.post("/api/cron/rebuild-related-tracks", headers=self.AUTH)
+            with patch("app.main.run_related_tracks_rebuild") as mock_rebuild:
+                second = client.post("/api/cron/rebuild-related-tracks", headers=self.AUTH)
+
+        assert first.json()["status"] == "accepted"
+        assert second.status_code == 202
+        assert second.json()["status"] == "skipped"
+        mock_rebuild.assert_not_called()
+
+    def test_rebuild_runs_again_once_the_throttle_window_has_passed(self, client, db):
+        self._seed_one_session(db)
+
+        with self._authorized():
+            client.post("/api/cron/rebuild-related-tracks", headers=self.AUTH)
+            with patch("app.main.MIN_RELATED_REBUILD_INTERVAL", timedelta(0)):
+                second = client.post("/api/cron/rebuild-related-tracks", headers=self.AUTH)
+
+        assert second.json()["status"] == "accepted"
+
+    def test_background_failure_does_not_surface_as_a_500(self, client, db):
+        """The handler has already answered 202 by the time the rebuild runs,
+        so a failing rebuild must be logged and swallowed, not raised into the
+        response cycle.
+        """
+        self._seed_one_session(db)
+
+        with (
+            self._authorized(),
+            patch(
+                "app.main.rebuild_related_tracks_rollup",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            resp = client.post("/api/cron/rebuild-related-tracks", headers=self.AUTH)
+
+        assert resp.status_code == 202
+        assert get_last_rebuilt_at(db) is None
+
+    def test_rate_limit_budget_is_separate_from_sync_tracks(self, client):
+        """A misconfigured rebuild schedule must not starve the sync job.
+
+        The unauthenticated cron limiter allows 2/minute. Exhausting it on the
+        rebuild route leaves the sync route's own budget untouched.
+        """
+        for _ in range(2):
+            assert client.post("/api/cron/rebuild-related-tracks").status_code == 401
+        assert client.post("/api/cron/rebuild-related-tracks").status_code == 429
+
+        # Still reaching the handler's auth check, not the limiter.
+        assert client.post("/api/cron/sync-tracks").status_code == 401
+
+
+class TestSyncStatusRollupVisibility:
+    def test_reports_last_rebuilt_at_once_the_rollup_has_been_built(self, client, db):
+        assert (
+            client.get("/api/sync-status").json()["related_tracks_rollup_last_rebuilt_at"] is None
+        )
+
+        db.add(
+            Stream(
+                track_name="R1",
+                artist_name="A",
+                played_at=datetime(2025, 5, 1, 12, 0),
+                track_id="r1",
+            )
+        )
+        db.commit()
+        rebuild_related_tracks_rollup(db)
+        db.commit()
+
+        body = client.get("/api/sync-status").json()
+        assert body["related_tracks_rollup_last_rebuilt_at"] is not None
 
 
 class TestDocsUrlsForEnvironment:

@@ -79,6 +79,41 @@ docker compose exec backend python -m app.scripts.backfill_rollups
 docker compose exec backend python -m app.scripts.backfill_rollups --commit
 ```
 
+### Related-Tracks Rollup
+
+`GET /api/tracks/{id}/related` reads two separate rollup tables,
+`track_session_counts` and `track_cooccurrences`, which record how often
+tracks are played in the same listening session. Unlike the daily rollups
+these have **no incremental maintenance hook** — min-support filtering is
+incompatible with incremental counting (see
+`backend/app/services/related_tracks_rollup.py`), so they are rebuilt
+wholesale on a schedule.
+
+That schedule is a **second cron-job.org job**, separate from the once-a-minute
+playback sync. Hourly is plenty; the endpoint self-throttles anything arriving
+under 55 minutes apart and answers `202` immediately, doing the rebuild in the
+background:
+
+```bash
+curl -X POST https://<backend-host>/api/cron/rebuild-related-tracks -H "Authorization: Bearer $CRON_SECRET"
+```
+
+Run the backfill manually (idempotent, safe any time) when:
+
+- **Deploying migration `d4e5f6a7b8c9`.** It creates both tables empty. Until
+  the backfill runs, every track's related list is empty — an HTTP 200 with
+  `{"related": []}`, so nothing errors to tell you it was skipped.
+- **The hourly schedule has been paused or broken.** Check
+  `related_tracks_rollup_last_rebuilt_at` on `GET /api/sync-status`; `null`
+  means the rollup has never been built.
+
+```bash
+# Preview counts, write nothing
+docker compose exec backend python -m app.scripts.backfill_related_tracks
+# Persist
+docker compose exec backend python -m app.scripts.backfill_related_tracks --commit
+```
+
 ## Verification Commands
 
 Run these to confirm your local setup is healthy.
@@ -125,12 +160,15 @@ one client can exhaust for everyone. `CRON_SECRET` and a non-empty
 
 ## Backend Response Cache
 
-Dashboard, detail, related-track, and history reads use a bounded in-process
-TTL cache to reduce repeated database egress. The local playback sync loop
-clears the cache after recording a completed play in that backend process.
-Historical import scripts and multi-worker deployments do not share
-in-process invalidation, so those writes become visible after the endpoint TTL
-expires.
+Dashboard, detail, and history reads use a bounded in-process TTL cache to
+reduce repeated database egress. The local playback sync loop clears the cache
+after recording a completed play in that backend process. Historical import
+scripts and multi-worker deployments do not share in-process invalidation, so
+those writes become visible after the endpoint TTL expires.
+
+Related-tracks reads are deliberately uncached: they are already two indexed
+lookups against the rollup above, so a cache entry would only occupy a slot in
+the shared pool that a genuinely expensive dashboard aggregate needs.
 
 ## Frontend Environment
 
