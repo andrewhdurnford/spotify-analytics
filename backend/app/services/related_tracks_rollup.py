@@ -54,10 +54,16 @@ DEFAULT_MIN_SUPPORT = 3
 MAX_RELATED_PER_TRACK = 100
 # A session with more distinct tracks than this contributes to per-track
 # session counts but is skipped for pairwise counting: `combinations` is
-# quadratic, so one pathological session (a day-long shuffle with no 30-min
-# break) could otherwise generate millions of pairs in the accumulator.
-# Sized well above a plausible real session (~8h of 3-min tracks is ~160).
-MAX_SESSION_TRACKS = 300
+# quadratic, so one pathological session (a stuck sync replaying history, or
+# a day-long shuffle with no 30-min break) could otherwise generate millions
+# of pairs in the accumulator.
+#
+# Sized against the real backfill (228k streams / 7.2k sessions): p50 is 10
+# distinct tracks, p99 is 135, and the largest genuine session is 311. This
+# is a runaway guard, not a trim -- it sits ~3x above the observed maximum so
+# it stays clear of real listening, and even a session at the cap only yields
+# ~500k pairs. Revisit if the warning below ever fires on ordinary data.
+MAX_SESSION_TRACKS = 1000
 
 # Server-side batch size for streaming `streams` during a rebuild.
 _STREAM_FETCH_SIZE = 1000
