@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.models import Artist, Stream, Track
+from app.services.timezone import DISPLAY_TIMEZONE
 from app.services.top import (
     get_available_periods,
     get_date_range,
@@ -29,9 +30,11 @@ def _full_month(year: int, month: int, counts: dict[str, int]) -> list[dict]:
         for day in range(1, days_in_month + 1)
     ]
 
+
 # ---------------------------------------------------------------------------
 # get_date_range
 # ---------------------------------------------------------------------------
+
 
 class TestGetDateRange:
     def test_all_returns_none(self):
@@ -99,6 +102,7 @@ class TestGetDateRange:
 # ---------------------------------------------------------------------------
 # Helper to seed test data
 # ---------------------------------------------------------------------------
+
 
 def _seed_data(db: Session):
     """Insert tracks, artists, and streams for query tests."""
@@ -175,6 +179,7 @@ def _seed_data(db: Session):
 # ---------------------------------------------------------------------------
 # Top songs / artists / albums queries
 # ---------------------------------------------------------------------------
+
 
 class TestGetTopSongs:
     def test_all_time(self, db: Session):
@@ -316,6 +321,26 @@ class TestGetTimeline:
         assert [point.model_dump() for point in result.timeline] == _full_month(
             2026, 7, {"2026-07-08": 3}
         )
+
+    def test_does_not_zero_fill_future_days(self, db: Session):
+        today = datetime.now(DISPLAY_TIMEZONE).date()
+        base_date = datetime(today.year, today.month, 1)
+
+        result = get_timeline(db, "month", base_date)
+
+        periods = [point.period for point in result.timeline]
+        assert periods[-1] == str(today)
+        assert len(periods) == today.day
+
+    def test_does_not_zero_fill_future_months(self, db: Session):
+        today = datetime.now(DISPLAY_TIMEZONE).date()
+        base_date = datetime(today.year, 1, 1)
+
+        result = get_timeline(db, "year", base_date)
+
+        periods = [point.period for point in result.timeline]
+        assert periods[-1] == f"{today.year}-{today.month:02d}"
+        assert len(periods) == today.month
 
 
 class TestGetAvailablePeriods:
