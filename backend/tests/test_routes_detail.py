@@ -1,8 +1,21 @@
 """Integration tests for artist and track detail routes."""
 
+import calendar
 from datetime import datetime
 
 from app.models import Artist, Stream, Track
+
+
+def _full_month(year: int, month: int, counts: dict[str, int]) -> list[dict]:
+    """Expected daily timeline for a whole month, zero-filled except `counts`."""
+    days_in_month = calendar.monthrange(year, month)[1]
+    return [
+        {
+            "period": (period := f"{year}-{month:02d}-{day:02d}"),
+            "play_count": counts.get(period, 0),
+        }
+        for day in range(1, days_in_month + 1)
+    ]
 
 
 def _seed(db):
@@ -98,10 +111,7 @@ class TestArtistDetailRoute:
         body = resp.json()
         assert body["artist"]["total_play_count"] == 2
         assert body["granularity"] == "daily"
-        assert body["timeline"] == [
-            {"period": "2025-01-15", "play_count": 1},
-            {"period": "2025-01-16", "play_count": 1},
-        ]
+        assert body["timeline"] == _full_month(2025, 1, {"2025-01-15": 1, "2025-01-16": 1})
 
     def test_artist_detail_not_found(self, client):
         resp = client.get("/api/artists/missing")
@@ -145,10 +155,7 @@ class TestTrackDetailRoute:
         assert resp.status_code == 200
         body = resp.json()
         assert body["granularity"] == "daily"
-        assert body["timeline"] == [
-            {"period": "2025-01-15", "play_count": 1},
-            {"period": "2025-01-16", "play_count": 1},
-        ]
+        assert body["timeline"] == _full_month(2025, 1, {"2025-01-15": 1, "2025-01-16": 1})
 
     def test_track_detail_by_name_fallback(self, client, db):
         _seed(db)

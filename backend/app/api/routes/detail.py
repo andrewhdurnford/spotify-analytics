@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
 from ...database import get_db
+from ...dependencies import require_general_rate_limit, require_related_tracks_rate_limit
 from ...schemas import (
     AlbumDetailResponse,
     ArtistDetailResponse,
@@ -9,23 +12,38 @@ from ...schemas import (
     TrackDetailResponse,
 )
 from ...services import detail as detail_service
-from ...services.dashboard_cache import (
-    RELATED_TRACKS_TTL_SECONDS,
-    cache_window_key,
-    dashboard_cache,
-    detail_ttl,
+from ...services.dashboard_cache import cache_window_key, dashboard_cache, detail_ttl
+from ..params import (
+    MAX_ALBUM_NAME_LENGTH,
+    MAX_LIMIT,
+    MAX_NAME_LENGTH,
+    MAX_SPOTIFY_ID_LENGTH,
+    MIN_LIMIT,
+    Timeframe,
+    parse_date_param,
 )
-from ..params import Timeframe, parse_date_param
 
 router = APIRouter()
 
 
-@router.get("/artists/{artist_id}", response_model=ArtistDetailResponse)
+def _spotify_id_path() -> Any:
+    """A fresh Path(...) bound per parameter -- FastAPI mutates the FieldInfo
+    it's given to bind it to a specific parameter name, so a single shared
+    instance can't be reused across different path parameters.
+    """
+    return Path(..., min_length=1, max_length=MAX_SPOTIFY_ID_LENGTH)
+
+
+@router.get(
+    "/artists/{artist_id}",
+    response_model=ArtistDetailResponse,
+    dependencies=[Depends(require_general_rate_limit)],
+)
 def get_artist_detail(
-    artist_id: str,
+    artist_id: str = _spotify_id_path(),
     timeframe: Timeframe = "all",
     date: str = Query(None),
-    limit: int = Query(10, ge=1, le=50),
+    limit: int = Query(10, ge=MIN_LIMIT, le=MAX_LIMIT),
     db: Session = Depends(get_db),
 ):
     """Get detailed information for a single artist."""
@@ -62,13 +80,17 @@ def get_artist_detail(
     return result
 
 
-@router.get("/albums/by-name", response_model=AlbumDetailResponse)
+@router.get(
+    "/albums/by-name",
+    response_model=AlbumDetailResponse,
+    dependencies=[Depends(require_general_rate_limit)],
+)
 def get_album_detail_by_name(
-    artist_id: str = Query(...),
-    album_name: str = Query(...),
+    artist_id: str = Query(..., min_length=1, max_length=MAX_SPOTIFY_ID_LENGTH),
+    album_name: str = Query(..., min_length=1, max_length=MAX_ALBUM_NAME_LENGTH),
     timeframe: Timeframe = "all",
     date: str = Query(None),
-    limit: int = Query(25, ge=1, le=50),
+    limit: int = Query(25, ge=MIN_LIMIT, le=MAX_LIMIT),
     db: Session = Depends(get_db),
 ):
     """Get detailed information for an album, keyed by (artist_id, album_name)."""
@@ -102,10 +124,14 @@ def get_album_detail_by_name(
     return result
 
 
-@router.get("/tracks/by-name", response_model=TrackDetailResponse)
+@router.get(
+    "/tracks/by-name",
+    response_model=TrackDetailResponse,
+    dependencies=[Depends(require_general_rate_limit)],
+)
 def get_track_detail_by_name(
-    track_name: str = Query(...),
-    artist_name: str = Query(...),
+    track_name: str = Query(..., min_length=1, max_length=MAX_NAME_LENGTH),
+    artist_name: str = Query(..., min_length=1, max_length=MAX_NAME_LENGTH),
     timeframe: Timeframe = "all",
     date: str = Query(None),
     db: Session = Depends(get_db),
@@ -140,9 +166,13 @@ def get_track_detail_by_name(
     return result
 
 
-@router.get("/tracks/{track_id}", response_model=TrackDetailResponse)
+@router.get(
+    "/tracks/{track_id}",
+    response_model=TrackDetailResponse,
+    dependencies=[Depends(require_general_rate_limit)],
+)
 def get_track_detail(
-    track_id: str,
+    track_id: str = _spotify_id_path(),
     timeframe: Timeframe = "all",
     date: str = Query(None),
     db: Session = Depends(get_db),
@@ -174,10 +204,14 @@ def get_track_detail(
     return result
 
 
-@router.get("/tracks/{track_id}/related", response_model=RelatedTracksResponse)
+@router.get(
+    "/tracks/{track_id}/related",
+    response_model=RelatedTracksResponse,
+    dependencies=[Depends(require_related_tracks_rate_limit)],
+)
 def get_related_tracks(
-    track_id: str,
-    limit: int = Query(20, ge=1, le=50),
+    track_id: str = _spotify_id_path(),
+    limit: int = Query(20, ge=MIN_LIMIT, le=MAX_LIMIT),
     db: Session = Depends(get_db),
 ):
     """Get tracks frequently played in the same listening session as this one.
@@ -186,14 +220,15 @@ def get_related_tracks(
     contiguous runs of plays with no gap > 30 min. Results are scored with
     cosine similarity over session-membership and require at least 3
     co-occurring sessions to surface.
+
+    Deliberately *not* cached, unlike the other detail routes. The co-occurrence
+    rollup (`app.services.related_tracks_rollup`) reduces this to two indexed
+    lookups, so a cache entry would buy nothing while occupying a slot in the
+    shared bounded pool -- evicting dashboard aggregates that actually are
+    expensive -- and stacking up to an hour of staleness on top of the rollup's
+    own rebuild interval.
     """
-    key = ("related-tracks", track_id, limit)
-    result = dashboard_cache.get_or_set(
-        key,
-        RELATED_TRACKS_TTL_SECONDS,
-        lambda: detail_service.get_related_tracks(db, track_id, limit=limit),
-        cache_none=False,
-    )
+    result = detail_service.get_related_tracks(db, track_id, limit=limit)
     if result is None:
         raise HTTPException(
             status_code=404,

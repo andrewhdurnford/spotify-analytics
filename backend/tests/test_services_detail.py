@@ -1,6 +1,8 @@
 """Focused tests for app.services.detail query behavior."""
 
+import calendar
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,19 @@ from app.services.detail import (
     get_track_detail,
     get_track_detail_by_name,
 )
+from app.services.related_tracks_rollup import rebuild_related_tracks_rollup
+
+
+def _full_month(year: int, month: int, counts: dict[str, int]) -> list[dict]:
+    """Expected daily timeline for a whole month, zero-filled except `counts`."""
+    days_in_month = calendar.monthrange(year, month)[1]
+    return [
+        {
+            "period": (period := f"{year}-{month:02d}-{day:02d}"),
+            "play_count": counts.get(period, 0),
+        }
+        for day in range(1, days_in_month + 1)
+    ]
 
 
 def _seed_detail_data(db: Session):
@@ -114,10 +129,9 @@ class TestGetArtistDetail:
         assert result.granularity == "daily"
         assert [song.track_name for song in result.top_songs] == ["Song One"]
         assert [album.album_name for album in result.top_albums] == ["Album One"]
-        assert [point.model_dump() for point in result.timeline] == [
-            {"period": "2025-01-05", "play_count": 1},
-            {"period": "2025-01-06", "play_count": 1},
-        ]
+        assert [point.model_dump() for point in result.timeline] == _full_month(
+            2025, 1, {"2025-01-05": 1, "2025-01-06": 1}
+        )
 
     def test_missing_artist_returns_none(self, db: Session):
         _seed_detail_data(db)
@@ -199,10 +213,9 @@ class TestGetAlbumDetail:
         assert result is not None
         assert result.granularity == "daily"
         assert result.album.total_play_count == 2
-        assert [p.model_dump() for p in result.timeline] == [
-            {"period": "2025-01-05", "play_count": 1},
-            {"period": "2025-01-06", "play_count": 1},
-        ]
+        assert [p.model_dump() for p in result.timeline] == _full_month(
+            2025, 1, {"2025-01-05": 1, "2025-01-06": 1}
+        )
 
     def test_missing_album_returns_none(self, db: Session):
         _seed_detail_data(db)
@@ -249,10 +262,9 @@ class TestGetTrackDetail:
         assert result is not None
         assert result.track.total_play_count == 2
         assert result.granularity == "daily"
-        assert [point.model_dump() for point in result.timeline] == [
-            {"period": "2025-01-05", "play_count": 1},
-            {"period": "2025-01-06", "play_count": 1},
-        ]
+        assert [point.model_dump() for point in result.timeline] == _full_month(
+            2025, 1, {"2025-01-05": 1, "2025-01-06": 1}
+        )
 
     def test_daily_timeline_uses_toronto_calendar_date(self, db: Session):
         _seed_detail_data(db)
@@ -277,10 +289,9 @@ class TestGetTrackDetail:
         )
 
         assert result is not None
-        assert [point.model_dump() for point in result.timeline] == [
-            {"period": "2025-01-05", "play_count": 1},
-            {"period": "2025-01-06", "play_count": 2},
-        ]
+        assert [point.model_dump() for point in result.timeline] == _full_month(
+            2025, 1, {"2025-01-05": 1, "2025-01-06": 2}
+        )
 
     def test_missing_track_returns_none(self, db: Session):
         result = get_track_detail(
@@ -311,9 +322,9 @@ class TestGetTrackDetailByName:
         assert result.track.artist_name == "Loose Artist"
         assert result.track.total_play_count == 1
         assert result.granularity == "daily"
-        assert [point.model_dump() for point in result.timeline] == [
-            {"period": "2025-01-07", "play_count": 1},
-        ]
+        assert [point.model_dump() for point in result.timeline] == _full_month(
+            2025, 1, {"2025-01-07": 1}
+        )
 
     def test_name_fallback_returns_zero_for_existing_track_outside_timeframe(self, db: Session):
         _seed_detail_data(db)
@@ -328,7 +339,7 @@ class TestGetTrackDetailByName:
 
         assert result is not None
         assert result.track.total_play_count == 0
-        assert result.timeline == []
+        assert [point.model_dump() for point in result.timeline] == _full_month(2025, 2, {})
 
     def test_missing_name_fallback_returns_none(self, db: Session):
         _seed_detail_data(db)
@@ -356,7 +367,12 @@ def _seed_related_data(db: Session):
       Session 4 (Jan 5):  far-track only                 (no cooc with target)
 
     Expected: near-A and near-B both have cooc=3 (every session with target).
-    same-artist has cooc=2 — below the default min_support of 3, so dropped.
+    same-artist has cooc=2 — below the build-time DEFAULT_MIN_SUPPORT of 3,
+    so it never earns a `track_cooccurrences` row.
+
+    `get_related_tracks` reads the rollup rather than `streams`, so the
+    rebuild below is part of the fixture: without it the seeded plays are
+    invisible to the query.
     """
     artist_target = Artist(spotify_id="art-target", name="Target Artist", genres=[])
     artist_other = Artist(spotify_id="art-other", name="Other Artist", genres=[])
@@ -403,6 +419,9 @@ def _seed_related_data(db: Session):
     db.add_all([artist_target, artist_other, artist_far, *tracks, *streams])
     db.commit()
 
+    rebuild_related_tracks_rollup(db)
+    db.commit()
+
 
 class TestGetRelatedTracks:
     def test_returns_top_cooccurring_tracks_sorted_by_score(self, db: Session):
@@ -423,26 +442,16 @@ class TestGetRelatedTracks:
             assert r.artist_name  # populated from Track or Stream fallback
             assert 0.0 < r.score <= 1.0
 
-    def test_min_support_can_be_lowered_to_surface_more(self, db: Session):
-        _seed_related_data(db)
-
-        result = get_related_tracks(db, track_id="t-target", limit=10, min_support=2)
-
-        assert result is not None
-        ids = [r.track_id for r in result.related]
-        assert "t-same" in ids  # now surfaced (cooc=2)
-        same = next(r for r in result.related if r.track_id == "t-same")
-        assert same.cooc_sessions == 2
-        # Target has 4 sessions (0,1,2,3); same-artist appears in 2 (sessions 2 and 3).
-        assert same.cooc_rate == 0.5
-        assert same.artist_id == "art-target"  # frontend uses this for toggle
-
     def test_target_track_not_returned_in_its_own_related_list(self, db: Session):
-        _seed_related_data(db)
+        # min_support lowered to 1 so every co-occurrence in the fixture is
+        # persisted -- the target still must not appear among its own results.
+        with patch("app.services.related_tracks_rollup.DEFAULT_MIN_SUPPORT", 1):
+            _seed_related_data(db)
 
-        result = get_related_tracks(db, track_id="t-target", limit=10, min_support=1)
+        result = get_related_tracks(db, track_id="t-target", limit=10)
 
         assert result is not None
+        assert result.related  # sanity: the lowered floor did surface pairs
         assert all(r.track_id != "t-target" for r in result.related)
 
     def test_limit_caps_results(self, db: Session):
@@ -452,6 +461,43 @@ class TestGetRelatedTracks:
 
         assert result is not None
         assert len(result.related) == 1
+
+    def test_metadata_comes_from_most_recent_stream_per_track(self, db: Session):
+        _seed_related_data(db)
+        # t-nearA already has three streams on art-other. Add a newer one that
+        # re-attributes it, plus an even newer row with no artist_id at all.
+        # The rollup is deliberately not rebuilt afterwards: display metadata
+        # is read straight from `streams`, independent of the co-occurrence
+        # tables, and this asserts exactly that lookup.
+        later = datetime(2025, 2, 1, 12, 0)
+        db.add(
+            Stream(
+                track_name="Near A",
+                artist_name="Reattributed",
+                played_at=later,
+                track_id="t-nearA",
+                artist_id="art-far",
+            )
+        )
+        db.add(
+            Stream(
+                track_name="Near A",
+                artist_name="No Artist Id",
+                played_at=later + timedelta(days=1),
+                track_id="t-nearA",
+                artist_id=None,
+            )
+        )
+        db.commit()
+
+        result = get_related_tracks(db, track_id="t-target", limit=10)
+
+        assert result is not None
+        near_a = [r for r in result.related if r.track_id == "t-nearA"]
+        assert len(near_a) == 1  # one row per track_id, never a duplicate
+        # Highest streams.id with a non-NULL artist_id wins; the newer NULL row
+        # is filtered out rather than blanking the artist.
+        assert near_a[0].artist_id == "art-far"
 
     def test_unknown_track_returns_none(self, db: Session):
         _seed_related_data(db)

@@ -8,21 +8,28 @@ Totals, rankings (top songs/albums/tracks), and timelines are rollup-backed
 point lookups (existence checks, "grab one album image/artist name") stay
 Stream-based since they're already cheap single-row lookups, not scans.
 `get_related_tracks` needs individual play-event ordering for session
-detection and is intentionally left Stream-based (rollups have no per-event
-grain).
+detection, which `daily_track_stats` has no grain for, so it reads its own
+rollup instead (`track_session_counts` / `track_cooccurrences`, built by
+`app.services.related_tracks_rollup`).
 """
 
 import logging
 import math
 import time
-from collections import defaultdict
 from datetime import date as date_type
 from datetime import datetime
 
 from sqlalchemy import desc, extract, func, select
 from sqlalchemy.orm import Session
 
-from ..models import Artist, DailyTrackStats, Stream, Track
+from ..models import (
+    Artist,
+    DailyTrackStats,
+    Stream,
+    Track,
+    TrackCooccurrence,
+    TrackSessionCount,
+)
 from ..schemas import (
     AlbumDetail,
     AlbumDetailResponse,
@@ -39,14 +46,9 @@ from ..schemas import (
 )
 from .rollups import NO_ALBUM_SENTINEL
 from .timezone import utc_naive_to_display
-from .top import get_local_date_range
+from .top import fill_timeline_gaps, get_local_date_range
 
 logger = logging.getLogger(__name__)
-
-# Session = consecutive plays with no gap > this threshold.
-SESSION_GAP_SECONDS = 30 * 60
-# Minimum number of co-occurring sessions for a related track to surface.
-DEFAULT_MIN_SUPPORT = 3
 
 
 def _get_available_periods(db: Session, *filters) -> AvailablePeriods:
@@ -98,24 +100,24 @@ def _build_rollup_timeline_query(filters: tuple, timeframe: str):
         return stmt, "monthly"
 
 
-def _format_timeline_results(results, granularity: str) -> list[PlayCountOverTime]:
-    """Format timeline query results into PlayCountOverTime objects."""
+def _format_timeline_results(
+    results,
+    granularity: str,
+    start_date: date_type | None = None,
+    end_date: date_type | None = None,
+) -> list[PlayCountOverTime]:
+    """Format timeline query results into PlayCountOverTime objects.
+
+    Rows for periods with no plays are absent from `results`, so when the
+    caller knows the full [start_date, end_date) range, gaps are filled with
+    zero-count entries. Otherwise (e.g. timeframe "all", where the range is
+    unbounded) only the periods that have data are returned.
+    """
     if granularity == "daily":
-        return [
-            PlayCountOverTime(
-                period=str(r.date),
-                play_count=int(r.play_count),
-            )
-            for r in results
-        ]
+        counts = {str(r.date): int(r.play_count) for r in results}
     else:
-        return [
-            PlayCountOverTime(
-                period=f"{int(r.yr)}-{int(r.mo):02d}",
-                play_count=int(r.play_count),
-            )
-            for r in results
-        ]
+        counts = {f"{int(r.yr)}-{int(r.mo):02d}": int(r.play_count) for r in results}
+    return fill_timeline_gaps(counts, granularity, start_date, end_date)
 
 
 def get_artist_detail(
@@ -219,7 +221,7 @@ def get_artist_detail(
     # Listening timeline (daily for month, monthly otherwise)
     timeline_query, granularity = _build_rollup_timeline_query(artist_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
-    timeline = _format_timeline_results(timeline_results, granularity)
+    timeline = _format_timeline_results(timeline_results, granularity, start_date, end_date)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(f"get_artist_detail query: {elapsed_ms:.1f}ms (artist_id={artist_id})")
@@ -329,7 +331,7 @@ def get_album_detail(
     # Timeline (filter on both artist_id and album_name)
     timeline_query, granularity = _build_rollup_timeline_query(album_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
-    timeline = _format_timeline_results(timeline_results, granularity)
+    timeline = _format_timeline_results(timeline_results, granularity, start_date, end_date)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(
@@ -390,7 +392,7 @@ def get_track_detail(
     # Listening timeline (daily for month, monthly otherwise)
     timeline_query, granularity = _build_rollup_timeline_query(track_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
-    timeline = _format_timeline_results(timeline_results, granularity)
+    timeline = _format_timeline_results(timeline_results, granularity, start_date, end_date)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(f"get_track_detail query: {elapsed_ms:.1f}ms (track_id={track_id})")
@@ -470,7 +472,7 @@ def get_track_detail_by_name(
     # Listening timeline (daily for month, monthly otherwise)
     timeline_query, granularity = _build_rollup_timeline_query(name_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
-    timeline = _format_timeline_results(timeline_results, granularity)
+    timeline = _format_timeline_results(timeline_results, granularity, start_date, end_date)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(
@@ -505,30 +507,36 @@ def get_related_tracks(
     db: Session,
     track_id: str,
     limit: int = 20,
-    min_support: int = DEFAULT_MIN_SUPPORT,
 ) -> RelatedTracksResponse | None:
     """Return tracks frequently played in the same listening session as the target.
 
     A "session" is a contiguous run of plays separated by gaps no larger than
-    SESSION_GAP_SECONDS. Two tracks are co-occurring when they appear in the
-    same session. Co-occurrence is counted per-session (not per-play), then
-    scored with cosine similarity over session-membership:
+    `related_tracks_rollup.SESSION_GAP_SECONDS`. Two tracks are co-occurring
+    when they appear in the same session. Co-occurrence is counted
+    per-session (not per-play), then scored with cosine similarity over
+    session-membership:
 
         score(A, B) = |sessions(A) ∩ sessions(B)|
                       / sqrt(|sessions(A)| * |sessions(B)|)
 
-    Tracks with fewer than `min_support` co-occurring sessions are dropped to
-    avoid one-off noise.
-
     Returns None when the track is unknown (so the route can 404); returns an
     empty list when the track is known but has no qualifying related tracks.
 
-    Note: Sessions are computed in Python over all streams on every call. This
-    is fine for personal-scale libraries (sub-100ms for ~100k streams). If it
-    becomes a hot path, materialize co-occurrence into a nightly job table.
+    Rollup-backed: the session walk itself is precomputed into
+    `track_session_counts` / `track_cooccurrences` by
+    `app.services.related_tracks_rollup` on a schedule, so this is a pair of
+    indexed lookups over a small result set rather than a scan of every play.
+    The min-support floor and the per-track row cap are applied at *build*
+    time, which is why neither is a parameter here.
 
-    Deliberately not rollup-backed: session detection needs individual play
-    timestamps, which daily_track_stats doesn't retain.
+    An empty `related` list is also what a track legitimately returns before
+    the first rollup build has run (see migration d4e5f6a7b8c9).
+
+    Display metadata (artist_id and the track/artist name fallbacks) comes from
+    the most recent qualifying stream per track — highest streams.id, matching
+    the last-seen-wins convention in services/rollups.py. This is a behavior
+    change: the previous query kept whichever row the database happened to
+    return first, which was unordered in practice.
     """
     t0 = time.perf_counter()
 
@@ -538,51 +546,39 @@ def get_related_tracks(
     if not track:
         return None
 
-    # Pull all stream events with a known track_id, ordered by time. Loose
-    # streams (no track_id) can't be linked from related results anyway, and
-    # excluding them avoids polluting session boundaries with noise.
-    rows = db.execute(
-        select(Stream.track_id, Stream.played_at)
-        .where(Stream.track_id.isnot(None))
-        .order_by(Stream.played_at)
-    ).all()
-
-    # Walk in time order, bumping the session id whenever the gap exceeds
-    # SESSION_GAP_SECONDS, and record which sessions each track appears in.
-    sessions_per_track: dict[str, set[int]] = defaultdict(set)
-    session_id = 0
-    prev_t: datetime | None = None
-    for tid, played_at in rows:
-        if prev_t is not None and (played_at - prev_t).total_seconds() > SESSION_GAP_SECONDS:
-            session_id += 1
-        sessions_per_track[tid].add(session_id)
-        prev_t = played_at
-
-    target_sessions = sessions_per_track.get(track_id, set())
-    if not target_sessions:
+    target_count = db.execute(
+        select(TrackSessionCount.session_count).where(TrackSessionCount.track_id == track_id)
+    ).scalar_one_or_none()
+    if not target_count:
         return RelatedTracksResponse(related=[])
 
-    # Count co-occurring sessions and apply min_support filter.
-    target_count = len(target_sessions)
-    scored: list[tuple[str, int, float]] = []
-    for other_tid, sids in sessions_per_track.items():
-        if other_tid == track_id:
-            continue
-        cooc = len(sids & target_sessions)
-        if cooc < min_support:
-            continue
-        score = cooc / math.sqrt(target_count * len(sids))
-        scored.append((other_tid, cooc, score))
+    rows = db.execute(
+        select(
+            TrackCooccurrence.other_track_id,
+            TrackCooccurrence.cooc_sessions,
+            TrackSessionCount.session_count,
+        )
+        .join(TrackSessionCount, TrackSessionCount.track_id == TrackCooccurrence.other_track_id)
+        .where(TrackCooccurrence.track_id == track_id)
+    ).all()
+
+    scored = [
+        (other_id, cooc, cooc / math.sqrt(target_count * other_count))
+        for other_id, cooc, other_count in rows
+    ]
 
     if not scored:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(
-            f"get_related_tracks query: {elapsed_ms:.1f}ms "
-            f"(track_id={track_id}, n_streams={len(rows)}, results=0)"
+            f"get_related_tracks query: {elapsed_ms:.1f}ms (track_id={track_id}, results=0)"
         )
         return RelatedTracksResponse(related=[])
 
-    scored.sort(key=lambda x: x[2], reverse=True)
+    # Fully explicit tie-break: unlike the old in-Python walk, rows arrive
+    # from the database with no inherent order, so ties would otherwise
+    # resolve arbitrarily between calls. Matches the ordering the rollup
+    # builder uses for its per-track cap.
+    scored.sort(key=lambda entry: (-entry[2], -entry[1], entry[0]))
     top = scored[:limit]
     top_ids = [tid for tid, _, _ in top]
 
@@ -598,21 +594,28 @@ def get_related_tracks(
     meta_by_id = {r.spotify_id: r for r in meta_rows}
 
     # Pull artist_id (and fallback name fields) from streams — Track has no
-    # artist_id column.
+    # artist_id column. Aggregate to the newest qualifying stream id per track
+    # first so the outer select returns at most one row per track_id instead of
+    # every matching stream row (previously ~2.9k rows fetched per call to use
+    # at most `limit` of them).
+    latest_stream_ids = (
+        select(func.max(Stream.id))
+        .where(Stream.track_id.in_(top_ids))
+        .where(Stream.artist_id.isnot(None))
+        .group_by(Stream.track_id)
+        .scalar_subquery()
+    )
     stream_rows = db.execute(
         select(
             Stream.track_id,
             Stream.artist_id,
             Stream.track_name,
             Stream.artist_name,
-        )
-        .where(Stream.track_id.in_(top_ids))
-        .where(Stream.artist_id.isnot(None))
+        ).where(Stream.id.in_(latest_stream_ids))
     ).all()
-    stream_info: dict[str, tuple[str | None, str, str]] = {}
-    for r in stream_rows:
-        if r.track_id not in stream_info:
-            stream_info[r.track_id] = (r.artist_id, r.track_name, r.artist_name)
+    stream_info: dict[str, tuple[str | None, str, str]] = {
+        r.track_id: (r.artist_id, r.track_name, r.artist_name) for r in stream_rows
+    }
 
     related: list[RelatedTrack] = []
     for tid, cooc, score in top:
@@ -636,7 +639,7 @@ def get_related_tracks(
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(
         f"get_related_tracks query: {elapsed_ms:.1f}ms "
-        f"(track_id={track_id}, n_streams={len(rows)}, results={len(related)})"
+        f"(track_id={track_id}, candidates={len(rows)}, results={len(related)})"
     )
 
     return RelatedTracksResponse(related=related)
