@@ -4,6 +4,7 @@ import type {
   Artist,
   AvailablePeriods,
   DashboardResponse,
+  DashboardSectionKey,
   ListeningStats,
   Song,
   TimelineResponse,
@@ -18,8 +19,16 @@ const API_URL =
  * response body. Kept as a const tuple so success/failure bookkeeping and
  * the response shape can't drift apart.
  */
-const SECTION_KEYS = ['songs', 'artists', 'albums', 'stats', 'timeline', 'periods'] as const;
-const TIMEFRAMES = new Set(['all', 'year', 'month']);
+const SECTION_KEYS: readonly DashboardSectionKey[] = [
+  'songs',
+  'artists',
+  'albums',
+  'stats',
+  'timeline',
+  'periods',
+] as const;
+// Mirrors the timeframes accepted by get_date_range in backend/app/services/top.py.
+const TIMEFRAMES = new Set(['all', 'day', 'week', 'month', 'quarter', 'year']);
 
 // This route always makes fresh upstream requests and applies its own
 // Cache-Control header (see below), independent of Next.js's data cache and
@@ -31,7 +40,38 @@ interface SectionResult<T> {
   data: T | null;
 }
 
-function canonicalDashboardQuery(searchParams: URLSearchParams): string | null {
+/** Snap a date to the start of its period, mirroring get_date_range's start boundary. */
+function snapToPeriodStart(timeframe: string, date: Date): Date {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  switch (timeframe) {
+    case 'week': {
+      const mondayOffset = (date.getUTCDay() + 6) % 7;
+      const start = new Date(date);
+      start.setUTCDate(start.getUTCDate() - mondayOffset);
+      return start;
+    }
+    case 'month':
+      return new Date(Date.UTC(year, month, 1));
+    case 'quarter':
+      return new Date(Date.UTC(year, Math.floor(month / 3) * 3, 1));
+    case 'year':
+      return new Date(Date.UTC(year, 0, 1));
+    default:
+      return date;
+  }
+}
+
+/**
+ * Builds the canonical upstream/cache-key query string for a dashboard
+ * request. Unlike a strict validator, this normalizes valid-but-non-canonical
+ * input (param order, a date that isn't already the first day of its period,
+ * any of the backend's other timeframes) instead of rejecting it, so old or
+ * hand-edited URLs still resolve — to the same cached period a canonical URL
+ * would. Only structurally invalid input (unknown params, duplicates,
+ * unparseable dates, out-of-range dates) returns null.
+ */
+function normalizeDashboardQuery(searchParams: URLSearchParams): string | null {
   if ([...searchParams.keys()].some((key) => key !== 'timeframe' && key !== 'date')) {
     return null;
   }
@@ -52,7 +92,7 @@ function canonicalDashboardQuery(searchParams: URLSearchParams): string | null {
 
   if (
     (timeframe === 'all' && dates.length !== 0) ||
-    ((timeframe === 'year' || timeframe === 'month') && dates.length !== 1)
+    (timeframe !== null && timeframe !== 'all' && dates.length !== 1)
   ) {
     return null;
   }
@@ -71,14 +111,11 @@ function canonicalDashboardQuery(searchParams: URLSearchParams): string | null {
     ) {
       return null;
     }
-    if ((timeframe === 'year' && !date.endsWith('-01-01')) || date.slice(8) !== '01') {
-      return null;
-    }
-    canonical.set('date', date);
+    const snapped = snapToPeriodStart(timeframe!, parsed);
+    canonical.set('date', snapped.toISOString().slice(0, 10));
   }
 
-  const query = canonical.toString();
-  return query === searchParams.toString() ? query : null;
+  return canonical.toString();
 }
 
 async function fetchSection<T>(path: string): Promise<SectionResult<T>> {
@@ -95,13 +132,13 @@ async function fetchSection<T>(path: string): Promise<SectionResult<T>> {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const query = canonicalDashboardQuery(searchParams);
+  const query = normalizeDashboardQuery(searchParams);
   if (query === null) {
     return NextResponse.json(
       {
         error: {
           code: 'INVALID_QUERY',
-          message: 'Only canonical timeframe and date parameters are accepted.',
+          message: 'timeframe/date parameters are missing or malformed.',
         },
       },
       { status: 400, headers: { 'Cache-Control': DASHBOARD_NO_STORE_CACHE_CONTROL } },

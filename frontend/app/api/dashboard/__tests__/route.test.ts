@@ -93,13 +93,9 @@ describe("GET /api/dashboard", () => {
     "?timeframe=all&nonce=1",
     "?timeframe=all&timeframe=month",
     "?date=2025-01-01",
-    "?date=2025-01-01&timeframe=month",
     "?timeframe=all&date=2025-01-01",
-    "?timeframe=year&date=2025-02-01",
-    "?timeframe=month&date=2025-01-02",
-    "?timeframe=week&date=2025-01-01",
     "?timeframe=month&date=not-a-date",
-  ])("rejects non-canonical query strings without calling the backend: %s", async (query) => {
+  ])("rejects structurally invalid query strings without calling the backend: %s", async (query) => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -111,6 +107,26 @@ describe("GET /api/dashboard", () => {
     expect(res.headers.get("Cache-Control")).toBe(DASHBOARD_NO_STORE_CACHE_CONTROL);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    // [query, expected canonical upstream suffix]
+    ["?date=2025-01-01&timeframe=month", "timeframe=month&date=2025-01-01"],
+    ["?timeframe=year&date=2025-02-01", "timeframe=year&date=2025-01-01"],
+    ["?timeframe=month&date=2025-01-02", "timeframe=month&date=2025-01-01"],
+    ["?timeframe=week&date=2025-01-01", "timeframe=week&date=2024-12-30"],
+  ])(
+    "normalizes valid-but-non-canonical query strings instead of rejecting them: %s",
+    async (query, expectedSuffix) => {
+      mockAllUpstreamsSucceed();
+
+      const res = await GET(makeRequest(query));
+
+      expect(res.status).toBe(200);
+      const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+      const calledUrls = fetchMock.mock.calls.map((call) => call[0] as string);
+      expect(calledUrls).toContain(`${API_URL}/api/top/songs?${expectedSuffix}`);
+    },
+  );
 
   it("sets a five-minute stale-while-revalidate Cache-Control header on success", async () => {
     mockAllUpstreamsSucceed();

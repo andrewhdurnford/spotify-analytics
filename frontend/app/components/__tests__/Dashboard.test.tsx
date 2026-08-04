@@ -85,7 +85,7 @@ describe("Dashboard", () => {
     expect(backendTopCalls).toEqual([]);
   });
 
-  it("keeps recently-played on its own independent 60s poll", () => {
+  it("keeps recently-played on its own independent 5-minute poll", () => {
     setupSWR();
     render(<Dashboard initialTimeframe="all" initialDate={null} />);
 
@@ -93,7 +93,7 @@ describe("Dashboard", () => {
       (call) => typeof call[0] === "string" && call[0].startsWith("/api/top/recently-played"),
     );
     expect(recentlyPlayedCall).toBeTruthy();
-    expect(recentlyPlayedCall?.[2]).toMatchObject({ refreshInterval: 60_000 });
+    expect(recentlyPlayedCall?.[2]).toMatchObject({ refreshInterval: 5 * 60_000 });
   });
 
   it("shows loading skeletons while the combined dashboard request is in flight", () => {

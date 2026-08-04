@@ -139,6 +139,8 @@ export interface TimelineResponse {
 
 // --- Combined dashboard endpoint ---
 
+export type DashboardSectionKey = 'songs' | 'artists' | 'albums' | 'stats' | 'timeline' | 'periods';
+
 /**
  * Response shape for the same-origin `/api/dashboard` route handler, which
  * combines songs/artists/albums/stats/timeline/available-periods into a
@@ -152,5 +154,5 @@ export interface DashboardResponse {
   stats: ListeningStats | null;
   timeline: TimelineResponse | null;
   periods: AvailablePeriods | null;
-  errors: string[];
+  errors: DashboardSectionKey[];
 }
