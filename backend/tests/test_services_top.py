@@ -1,5 +1,6 @@
 """Tests for app.services.top — date-range logic and top-items queries."""
 
+import calendar
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -15,6 +16,18 @@ from app.services.top import (
     get_top_artists,
     get_top_songs,
 )
+
+
+def _full_month(year: int, month: int, counts: dict[str, int]) -> list[dict]:
+    """Expected daily timeline for a whole month, zero-filled except `counts`."""
+    days_in_month = calendar.monthrange(year, month)[1]
+    return [
+        {
+            "period": (period := f"{year}-{month:02d}-{day:02d}"),
+            "play_count": counts.get(period, 0),
+        }
+        for day in range(1, days_in_month + 1)
+    ]
 
 # ---------------------------------------------------------------------------
 # get_date_range
@@ -300,9 +313,9 @@ class TestGetTimeline:
 
         result = get_timeline(db, "month", datetime(2026, 7, 1))
 
-        assert [point.model_dump() for point in result.timeline] == [
-            {"period": "2026-07-08", "play_count": 3},
-        ]
+        assert [point.model_dump() for point in result.timeline] == _full_month(
+            2026, 7, {"2026-07-08": 3}
+        )
 
 
 class TestGetAvailablePeriods:

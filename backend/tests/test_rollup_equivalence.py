@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session
 from app.models import Artist, Stream, Track
 from app.schemas import (
     ListeningStats,
-    PlayCountOverTime,
     TimelineResponse,
     TopAlbum,
     TopArtist,
@@ -183,6 +182,7 @@ def _raw_get_listening_stats(db: Session, timeframe: str, base_date: datetime) -
 
 def _raw_get_timeline(db: Session, timeframe: str, base_date: datetime) -> TimelineResponse:
     start, end = top_service.get_date_range(timeframe, base_date)
+    local_start, local_end = top_service.get_local_date_range(timeframe, base_date)
     if timeframe == "month":
         date_col = func.date(display_timestamp(Stream.played_at)).label("day")
         stmt = select(date_col, func.count(Stream.id).label("play_count"))
@@ -190,7 +190,7 @@ def _raw_get_timeline(db: Session, timeframe: str, base_date: datetime) -> Timel
             stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
         stmt = stmt.group_by(date_col).order_by(date_col)
         results = db.execute(stmt).all()
-        timeline = [PlayCountOverTime(period=str(r.day), play_count=r.play_count) for r in results]
+        counts = {str(r.day): int(r.play_count) for r in results}
         granularity = "daily"
     else:
         local_played_at = display_timestamp(Stream.played_at)
@@ -201,11 +201,9 @@ def _raw_get_timeline(db: Session, timeframe: str, base_date: datetime) -> Timel
             stmt = stmt.where(Stream.played_at >= start, Stream.played_at < end)
         stmt = stmt.group_by(year_col, month_col).order_by(year_col, month_col)
         results = db.execute(stmt).all()
-        timeline = [
-            PlayCountOverTime(period=f"{int(r.yr)}-{int(r.mo):02d}", play_count=r.play_count)
-            for r in results
-        ]
+        counts = {f"{int(r.yr)}-{int(r.mo):02d}": int(r.play_count) for r in results}
         granularity = "monthly"
+    timeline = top_service.fill_timeline_gaps(counts, granularity, local_start, local_end)
     return TimelineResponse(timeline=timeline, granularity=granularity)
 
 
