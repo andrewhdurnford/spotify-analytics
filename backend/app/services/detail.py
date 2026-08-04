@@ -46,7 +46,7 @@ from ..schemas import (
 )
 from .rollups import NO_ALBUM_SENTINEL
 from .timezone import utc_naive_to_display
-from .top import get_local_date_range
+from .top import fill_timeline_gaps, get_local_date_range
 
 logger = logging.getLogger(__name__)
 
@@ -100,24 +100,24 @@ def _build_rollup_timeline_query(filters: tuple, timeframe: str):
         return stmt, "monthly"
 
 
-def _format_timeline_results(results, granularity: str) -> list[PlayCountOverTime]:
-    """Format timeline query results into PlayCountOverTime objects."""
+def _format_timeline_results(
+    results,
+    granularity: str,
+    start_date: date_type | None = None,
+    end_date: date_type | None = None,
+) -> list[PlayCountOverTime]:
+    """Format timeline query results into PlayCountOverTime objects.
+
+    Rows for periods with no plays are absent from `results`, so when the
+    caller knows the full [start_date, end_date) range, gaps are filled with
+    zero-count entries. Otherwise (e.g. timeframe "all", where the range is
+    unbounded) only the periods that have data are returned.
+    """
     if granularity == "daily":
-        return [
-            PlayCountOverTime(
-                period=str(r.date),
-                play_count=int(r.play_count),
-            )
-            for r in results
-        ]
+        counts = {str(r.date): int(r.play_count) for r in results}
     else:
-        return [
-            PlayCountOverTime(
-                period=f"{int(r.yr)}-{int(r.mo):02d}",
-                play_count=int(r.play_count),
-            )
-            for r in results
-        ]
+        counts = {f"{int(r.yr)}-{int(r.mo):02d}": int(r.play_count) for r in results}
+    return fill_timeline_gaps(counts, granularity, start_date, end_date)
 
 
 def get_artist_detail(
@@ -221,7 +221,7 @@ def get_artist_detail(
     # Listening timeline (daily for month, monthly otherwise)
     timeline_query, granularity = _build_rollup_timeline_query(artist_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
-    timeline = _format_timeline_results(timeline_results, granularity)
+    timeline = _format_timeline_results(timeline_results, granularity, start_date, end_date)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(f"get_artist_detail query: {elapsed_ms:.1f}ms (artist_id={artist_id})")
@@ -331,7 +331,7 @@ def get_album_detail(
     # Timeline (filter on both artist_id and album_name)
     timeline_query, granularity = _build_rollup_timeline_query(album_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
-    timeline = _format_timeline_results(timeline_results, granularity)
+    timeline = _format_timeline_results(timeline_results, granularity, start_date, end_date)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(
@@ -392,7 +392,7 @@ def get_track_detail(
     # Listening timeline (daily for month, monthly otherwise)
     timeline_query, granularity = _build_rollup_timeline_query(track_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
-    timeline = _format_timeline_results(timeline_results, granularity)
+    timeline = _format_timeline_results(timeline_results, granularity, start_date, end_date)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(f"get_track_detail query: {elapsed_ms:.1f}ms (track_id={track_id})")
@@ -472,7 +472,7 @@ def get_track_detail_by_name(
     # Listening timeline (daily for month, monthly otherwise)
     timeline_query, granularity = _build_rollup_timeline_query(name_filter, timeframe)
     timeline_results = db.execute(timeline_query).all()
-    timeline = _format_timeline_results(timeline_results, granularity)
+    timeline = _format_timeline_results(timeline_results, granularity, start_date, end_date)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(

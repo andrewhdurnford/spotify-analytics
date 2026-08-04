@@ -69,6 +69,39 @@ def get_date_range(timeframe: str, base_date: datetime) -> tuple[datetime | None
     return display_naive_to_utc(start), display_naive_to_utc(end)
 
 
+def fill_timeline_gaps(
+    counts: dict[str, int],
+    granularity: str,
+    start_date: date | None,
+    end_date: date | None,
+) -> list[PlayCountOverTime]:
+    """Expand sparse period->count rows into a contiguous timeline.
+
+    The rollup tables backing timelines only have rows for periods with at
+    least one play, so `counts` has gaps wherever a day/month had none. When
+    the full [start_date, end_date) range is known, fill those gaps with
+    zero-count entries so charts don't skip empty days/months. When the
+    range is unbounded (timeframe "all"), there's no way to know the full
+    span, so just return what data exists.
+    """
+    if start_date is None or end_date is None:
+        return [PlayCountOverTime(period=p, play_count=c) for p, c in counts.items()]
+
+    periods: list[str] = []
+    if granularity == "daily":
+        day = start_date
+        while day < end_date:
+            periods.append(str(day))
+            day += timedelta(days=1)
+    else:
+        year, month = start_date.year, start_date.month
+        while (year, month) < (end_date.year, end_date.month):
+            periods.append(f"{year}-{month:02d}")
+            year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+
+    return [PlayCountOverTime(period=p, play_count=counts.get(p, 0)) for p in periods]
+
+
 def get_local_date_range(timeframe: str, base_date: datetime) -> tuple[date | None, date | None]:
     """Return Toronto-local calendar date boundaries [start, end) for a timeframe.
 
@@ -350,7 +383,8 @@ def get_timeline(
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(f"get_timeline query: {elapsed_ms:.1f}ms ({timeframe})")
 
-        timeline = [PlayCountOverTime(period=str(r.date), play_count=r.play_count) for r in results]
+        counts = {str(r.date): int(r.play_count) for r in results}
+        timeline = fill_timeline_gaps(counts, granularity, start_date, end_date)
     else:
         year_col = extract("year", DailyListeningStats.date).label("yr")
         month_col = extract("month", DailyListeningStats.date).label("mo")
@@ -369,10 +403,8 @@ def get_timeline(
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(f"get_timeline query: {elapsed_ms:.1f}ms ({timeframe})")
 
-        timeline = [
-            PlayCountOverTime(period=f"{int(r.yr)}-{int(r.mo):02d}", play_count=int(r.play_count))
-            for r in results
-        ]
+        counts = {f"{int(r.yr)}-{int(r.mo):02d}": int(r.play_count) for r in results}
+        timeline = fill_timeline_gaps(counts, granularity, start_date, end_date)
 
     return TimelineResponse(timeline=timeline, granularity=granularity)
 
