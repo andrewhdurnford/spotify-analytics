@@ -24,7 +24,7 @@ from ..schemas import (
     TopSong,
 )
 from .rollups import NO_ALBUM_SENTINEL
-from .timezone import display_naive_to_utc, utc_naive_to_display
+from .timezone import DISPLAY_TIMEZONE, display_naive_to_utc, utc_naive_to_display
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +83,24 @@ def fill_timeline_gaps(
     zero-count entries so charts don't skip empty days/months. When the
     range is unbounded (timeframe "all"), there's no way to know the full
     span, so just return what data exists.
+
+    The filled range never extends past today (Toronto-local) — future
+    days/months haven't happened yet, so they're left off entirely rather
+    than shown as zero.
     """
     if start_date is None or end_date is None:
         return [PlayCountOverTime(period=p, play_count=c) for p, c in counts.items()]
+
+    today = datetime.now(DISPLAY_TIMEZONE).date()
+    if granularity == "daily":
+        cutoff = today + timedelta(days=1)
+    else:
+        cutoff = (
+            date(today.year + 1, 1, 1)
+            if today.month == 12
+            else date(today.year, today.month + 1, 1)
+        )
+    end_date = min(end_date, cutoff)
 
     periods: list[str] = []
     if granularity == "daily":
