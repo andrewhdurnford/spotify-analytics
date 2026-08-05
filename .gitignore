@@ -6,6 +6,8 @@
 # Data & backups
 data/
 spotify_backup.sql
+spotify_dump.sql
+*.sql
 
 # Dependencies
 node_modules/
