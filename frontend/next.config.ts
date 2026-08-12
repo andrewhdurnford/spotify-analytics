@@ -9,6 +9,7 @@ const nextConfig: NextConfig = {
         hostname: "i.scdn.co",
       },
     ],
+    unoptimized: true,
   },
 };
 
