@@ -1,4 +1,4 @@
-@import '@fontsource/tinos';
+@import '@fontsource/lilex';
 @import "tailwindcss";
 
 @theme {
@@ -19,8 +19,8 @@
   --color-stroke-strong: rgb(255 255 255 / 0.40);
   --color-chart-grid: rgb(255 255 255 / 0.08);
   --color-chart-axis: rgb(255 255 255 / 0.12);
-  --font-lexend: lexend, sans-serif;
-  --font-tinos: Tinos, serif;
+  --font-lexend: 'Lilex', sans-serif;
+  --font-tinos: 'Lilex', serif;
   --text-micro: 0.625rem;
   --text-chart-tick: 0.75rem;
   --text-chart-tooltip: 0.8125rem;
@@ -151,10 +151,3 @@ html::-webkit-scrollbar-thumb:hover {
     font-display: swap;
 }
 
-@font-face {
-    font-family: 'lexend';
-    src: url('/fonts/Lexend.ttf') format('truetype');
-    font-weight: 100 900;
-    font-style: normal;
-    font-display: swap;
-}
