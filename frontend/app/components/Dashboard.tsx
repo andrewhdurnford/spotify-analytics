@@ -9,17 +9,9 @@ import ListeningStats from '@/app/components/ListeningStats';
 import ListeningTimeline from '@/app/components/ListeningTimeline';
 import MediaSection from '@/app/components/MediaSection';
 import RecentlyPlayedSection from '@/app/components/RecentlyPlayedSection';
-import { fetcher } from '@/app/lib/fetcher';
+import { fetcher, localFetcher } from '@/app/lib/fetcher';
 import { timeframeQuery } from '@/app/lib/timeframe';
-import type {
-  Song,
-  Artist,
-  Album,
-  AvailablePeriods,
-  ListeningStats as ListeningStatsData,
-  RecentlyPlayedResponse,
-  TimelineResponse,
-} from '@/app/types';
+import type { DashboardResponse, RecentlyPlayedResponse } from '@/app/types';
 
 interface DashboardProps {
   initialTimeframe: string;
@@ -59,30 +51,18 @@ export default function Dashboard({
     [currentTimeframe, currentDate],
   );
 
+  // Songs, artists, albums, stats, timeline, and available-periods are all
+  // combined behind a single same-origin request. The route handler caches
+  // upstream responses for five minutes with stale-while-revalidate, so this
+  // one SWR call replaces what used to be six separate backend requests.
   const {
-    data: songs,
-    error: songsError,
-    isLoading: songsLoading,
-  } = useSWR<Song[]>(`/api/top/songs?${params}`, fetcher, { revalidateOnFocus: false });
+    data: dashboardData,
+    error: dashboardError,
+    isLoading: dashboardLoading,
+  } = useSWR<DashboardResponse>(`/api/dashboard?${params}`, localFetcher);
 
-  const {
-    data: artists,
-    error: artistsError,
-    isLoading: artistsLoading,
-  } = useSWR<Artist[]>(`/api/top/artists?${params}`, fetcher, { revalidateOnFocus: false });
-
-  const {
-    data: albums,
-    error: albumsError,
-    isLoading: albumsLoading,
-  } = useSWR<Album[]>(`/api/top/albums?${params}`, fetcher, { revalidateOnFocus: false });
-
-  const {
-    data: stats,
-    error: statsError,
-    isLoading: statsLoading,
-  } = useSWR<ListeningStatsData>(`/api/top/stats?${params}`, fetcher, { revalidateOnFocus: false });
-
+  // Current playback and recent history stay on their own short refresh
+  // cycles, independent of the five-minute dashboard cache above.
   const {
     data: recentlyPlayed,
     error: recentlyPlayedError,
@@ -92,20 +72,16 @@ export default function Dashboard({
     revalidateOnFocus: false,
   });
 
-  const { data: periods } = useSWR<AvailablePeriods>('/api/top/available-periods', fetcher, {
-    revalidateOnFocus: false,
-  });
+  const songs = dashboardData?.songs ?? [];
+  const artists = dashboardData?.artists ?? [];
+  const albums = dashboardData?.albums ?? [];
+  const stats = dashboardData?.stats ?? undefined;
+  const periods = dashboardData?.periods ?? undefined;
+  const timeline = dashboardData?.timeline?.timeline ?? [];
+  const timelineGranularity = dashboardData?.timeline?.granularity ?? 'monthly';
+  const hasPartialErrors = Boolean(dashboardData?.errors && dashboardData.errors.length > 0);
 
-  const { data: timelineData } = useSWR<TimelineResponse>(
-    `/api/top/timeline?${params}`,
-    fetcher,
-    { revalidateOnFocus: false },
-  );
-
-  const timeline = timelineData?.timeline ?? [];
-  const timelineGranularity = timelineData?.granularity ?? 'monthly';
-
-  const error = songsError || artistsError || albumsError || statsError || recentlyPlayedError;
+  const error = dashboardError || recentlyPlayedError || hasPartialErrors;
 
   const handleTimeframeChange = (timeframe: string, date: string | null) => {
     setCurrentTimeframe(timeframe);
@@ -140,33 +116,33 @@ export default function Dashboard({
       )}
 
       <div className="space-y-6 sm:space-y-8">
-        {statsLoading ? <LoadingSection title="Period Stats" /> : <ListeningStats stats={stats} />}
+        {dashboardLoading ? <LoadingSection title="Period Stats" /> : <ListeningStats stats={stats} />}
 
-        {timelineData ? (
+        {dashboardLoading ? (
+          <LoadingSection title="Listening Over Time" />
+        ) : dashboardData ? (
           timeline.length > 0 && (
             <div>
               <h2 className="font-tinos text-xl sm:text-2xl font-normal mb-4">Listening Over Time</h2>
               <ListeningTimeline data={timeline} granularity={timelineGranularity} />
             </div>
           )
-        ) : (
-          <LoadingSection title="Listening Over Time" />
-        )}
+        ) : null}
 
-        {songsLoading ? (
+        {dashboardLoading ? (
           <LoadingSection title="Top Songs" cards />
         ) : (
-          <MediaSection title="Top Songs" items={songs ?? []} type="songs" timeframe={currentTimeframe} date={currentDate} />
+          <MediaSection title="Top Songs" items={songs} type="songs" timeframe={currentTimeframe} date={currentDate} />
         )}
-        {albumsLoading ? (
+        {dashboardLoading ? (
           <LoadingSection title="Top Albums" cards />
         ) : (
-          <MediaSection title="Top Albums" items={albums ?? []} type="albums" timeframe={currentTimeframe} date={currentDate} />
+          <MediaSection title="Top Albums" items={albums} type="albums" timeframe={currentTimeframe} date={currentDate} />
         )}
-        {artistsLoading ? (
+        {dashboardLoading ? (
           <LoadingSection title="Top Artists" cards />
         ) : (
-          <MediaSection title="Top Artists" items={artists ?? []} type="artists" timeframe={currentTimeframe} date={currentDate} />
+          <MediaSection title="Top Artists" items={artists} type="artists" timeframe={currentTimeframe} date={currentDate} />
         )}
         {recentlyPlayedLoading ? (
           <LoadingSection title="Recently Played" cards />

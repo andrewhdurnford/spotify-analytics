@@ -136,3 +136,23 @@ export interface TimelineResponse {
   timeline: PlayCountOverTime[];
   granularity: string;
 }
+
+// --- Combined dashboard endpoint ---
+
+export type DashboardSectionKey = 'songs' | 'artists' | 'albums' | 'stats' | 'timeline' | 'periods';
+
+/**
+ * Response shape for the same-origin `/api/dashboard` route handler, which
+ * combines songs/artists/albums/stats/timeline/available-periods into a
+ * single cached request. `errors` lists the keys of any sections whose
+ * upstream fetch failed; those sections fall back to an empty/null value.
+ */
+export interface DashboardResponse {
+  songs: Song[];
+  artists: Artist[];
+  albums: Album[];
+  stats: ListeningStats | null;
+  timeline: TimelineResponse | null;
+  periods: AvailablePeriods | null;
+  errors: DashboardSectionKey[];
+}
