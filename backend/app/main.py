@@ -22,6 +22,7 @@ from .schemas import (
     SyncStatusResponse,
 )
 from .services.cron_auth import cron_token_is_valid
+from .services.recent_plays_sync import get_last_synced_at as get_recent_plays_last_synced_at
 from .services.related_tracks_rollup import (
     get_last_rebuilt_at,
     rebuild_related_tracks_rollup,
@@ -32,36 +33,40 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def local_playback_sync_loop() -> None:
-    """Run playback sync in-process for local/dev environments."""
-    from .tasks.sync_recent_tracks import fetch_and_store_recent_tracks
+async def recent_plays_sync_loop() -> None:
+    """Run the recently-played reconciliation sync in-process.
 
-    interval_seconds = max(5, settings.local_sync_interval_seconds)
-    logger.info("Starting local playback sync loop every %ss", interval_seconds)
+    Runs unconditionally (no local-only flag): the sync is idempotent, so
+    this and the external cron endpoint can both call it without
+    coordination -- see app.tasks.sync_recent_tracks.sync_recent_plays.
+    This also means local dev gets working play recording out of the box,
+    without needing an external cron-job.org schedule configured.
+    """
+    from .tasks.sync_recent_tracks import sync_recent_plays
+
+    interval_seconds = settings.recent_plays_sync_interval_seconds
+    logger.info("Starting recent plays sync loop every %ss", interval_seconds)
 
     while True:
         try:
-            await fetch_and_store_recent_tracks(max_wait_seconds=settings.sync_max_wait_seconds)
+            await sync_recent_plays()
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Local playback sync failed")
+            logger.exception("Recent plays sync failed")
 
         await asyncio.sleep(interval_seconds)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    sync_task = None
-    if settings.enable_local_sync:
-        sync_task = asyncio.create_task(local_playback_sync_loop())
+    sync_task = asyncio.create_task(recent_plays_sync_loop())
 
     yield
 
-    if sync_task:
-        sync_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await sync_task
+    sync_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await sync_task
 
 
 # --- App configuration (pure functions, unit-testable without booting a
@@ -230,11 +235,11 @@ async def cron_sync_tracks(authorization: str = Header(None)):
         logger.warning("Unauthorized cron attempt")
         raise _unauthorized_cron()
 
-    from .tasks.sync_recent_tracks import fetch_and_store_recent_tracks
+    from .tasks.sync_recent_tracks import sync_recent_plays
 
     try:
         logger.info("Starting cron sync...")
-        await fetch_and_store_recent_tracks(max_wait_seconds=settings.sync_max_wait_seconds)
+        await sync_recent_plays()
         logger.info("Cron sync completed successfully")
         return CronSyncResponse(status="success", message="Tracks synced successfully")
     except Exception as e:
@@ -339,16 +344,16 @@ def health_check():
 def sync_status(db: Session = Depends(get_db)):
     """Check the last sync status.
 
-    `related_tracks_rollup_last_rebuilt_at` is exposed so a broken or
-    forgotten rebuild schedule degrades visibly: without it, the only symptom
-    of a dead cron job is related-track results quietly going stale (or never
-    appearing at all, if the post-migration backfill was skipped).
+    `related_tracks_rollup_last_rebuilt_at` and `recent_plays_last_synced_at`
+    are exposed so a broken or forgotten schedule degrades visibly: without
+    them, the only symptom of a dead cron job is results quietly going stale.
 
     Deliberately omits the cron endpoint paths -- no reason to publish those
     to unauthenticated callers.
     """
     return SyncStatusResponse(
         status="Syncing via external cron service",
-        interval="Every minute",
+        interval=f"Every {settings.recent_plays_sync_interval_seconds}s",
         related_tracks_rollup_last_rebuilt_at=get_last_rebuilt_at(db),
+        recent_plays_last_synced_at=get_recent_plays_last_synced_at(db),
     )

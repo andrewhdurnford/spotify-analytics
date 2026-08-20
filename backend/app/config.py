@@ -31,10 +31,9 @@ class Settings(BaseSettings):
     # Cron Authentication - for external cron services like cron-job.org
     cron_secret: str = ""  # Required (non-empty) in production!
 
-    # Local playback sync loop
-    enable_local_sync: bool = False
-    local_sync_interval_seconds: int = 30
-    sync_max_wait_seconds: int = 25
+    # Recently-played reconciliation sync (runs both in-process and via the
+    # external cron endpoint; see app.tasks.sync_recent_tracks).
+    recent_plays_sync_interval_seconds: int = 300
 
     # Timeouts
     request_timeout_seconds: float = 30.0

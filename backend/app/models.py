@@ -7,6 +7,7 @@ from sqlalchemy import (
     JSON,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -73,6 +74,11 @@ class Stream(Base):
     artist_id: Mapped[str | None] = mapped_column(
         String(100), ForeignKey("artists.spotify_id"), default=None
     )
+    # Fraction of the track's duration estimated played, for rows sourced
+    # from the recently-played reconciliation sync (see
+    # app.services.recent_plays_sync). Null for historical-import and any
+    # pre-cutover rows -- those never computed a ratio.
+    played_ratio: Mapped[float | None] = mapped_column(Float, default=None)
 
     track: Mapped[Optional["Track"]] = relationship(
         back_populates="streams", foreign_keys=[track_id]
@@ -231,6 +237,25 @@ class RelatedTracksRollupMeta(Base):
     # Always 1: this table holds exactly one sentinel row.
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     last_rebuilt_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+
+
+class RecentPlaysSyncMeta(Base):
+    """Single-row bookkeeping for the recently-played reconciliation sync.
+
+    `cursor_played_at` is the `played_at` of the newest recently-played item
+    already resolved (accepted or rejected against the play-ratio
+    threshold) by app.services.recent_plays_sync. The next run fetches only
+    items after this cursor -- see that module for why every item in a
+    fetched batch can be resolved immediately (no carry-over "pending" item
+    needed) once a cursor exists.
+    """
+
+    __tablename__ = "recent_plays_sync_meta"
+
+    # Always 1: this table holds exactly one sentinel row.
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cursor_played_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
 
 
 # Stream columns the rollups derive their keys, dates, and totals from. An

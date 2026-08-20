@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 
 import httpx
@@ -6,12 +7,24 @@ import httpx
 from ..database import SessionLocal
 from ..dependencies import get_spotify_client
 from ..services.ingest_errors import IngestIssue
-from ..services.playback_sync import store_completed_play
+from ..services.recent_plays_sync import (
+    RecentPlaysSyncResult,
+    cursor_epoch_ms,
+    process_recently_played_items,
+    seed_cursor_to_now,
+)
 
 logger = logging.getLogger(__name__)
 
-COMPLETION_RATIO = 0.98
-COMPLETION_GRACE_MS = 5_000
+RECENTLY_PLAYED_URL = "https://api.spotify.com/v1/me/player/recently-played"
+RECENTLY_PLAYED_PAGE_LIMIT = 50
+# Bounds how far a single run pages forward when catching up after downtime
+# -- 5 pages * 50 items covers a long gap without an unbounded loop against
+# a possibly-misbehaving upstream.
+MAX_PAGES_PER_RUN = 5
+MAX_FETCH_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 2.0
+
 _sync_lock = asyncio.Lock()
 
 
@@ -19,140 +32,117 @@ def _log_ingest_issue(issue: IngestIssue) -> None:
     logger.warning(issue.message, extra=issue.log_extra())
 
 
-def _is_complete_enough(progress_ms: int | None, duration_ms: int | None) -> bool:
-    if not progress_ms or not duration_ms:
-        return False
-    if progress_ms >= duration_ms:
-        return True
-    return (
-        progress_ms / duration_ms >= COMPLETION_RATIO
-        or duration_ms - progress_ms <= COMPLETION_GRACE_MS
-    )
-
-
-def _ms_until_complete_enough(progress_ms: int | None, duration_ms: int | None) -> int | None:
-    if progress_ms is None or duration_ms is None:
-        return None
-    ratio_threshold_ms = round(duration_ms * COMPLETION_RATIO)
-    grace_threshold_ms = max(0, duration_ms - COMPLETION_GRACE_MS)
-    threshold_ms = min(ratio_threshold_ms, grace_threshold_ms)
-    return max(0, threshold_ms - progress_ms)
-
-
-async def _fetch_current_playback(client: httpx.AsyncClient, access_token: str) -> dict | None:
-    response = await client.get(
-        "https://api.spotify.com/v1/me/player/currently-playing",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-
-    if response.status_code == 204:
-        logger.info("No active playback to sync")
-        return None
-
-    if response.status_code != 200:
-        logger.error(f"Error fetching current playback: {response.status_code} - {response.text}")
-        return None
-
-    data = response.json()
-    if not data.get("is_playing") or not data.get("item"):
-        logger.info("Current playback is paused or empty")
-        return None
-
-    track = data["item"]
-    if track.get("type") and track["type"] != "track":
-        logger.info("Current playback is not a track")
-        return None
-
-    return data
-
-
-async def _wait_for_completion_window(
-    client: httpx.AsyncClient,
-    access_token: str,
-    data: dict,
-    max_wait_seconds: int,
+async def _fetch_recently_played_page(
+    client: httpx.AsyncClient, access_token: str, after_ms: int | None
 ) -> dict | None:
-    track = data["item"]
-    progress_ms = data.get("progress_ms")
-    duration_ms = track.get("duration_ms")
-    wait_ms = _ms_until_complete_enough(progress_ms, duration_ms)
+    """Fetch one page, retrying on 429/5xx.
 
-    if wait_ms is None:
-        logger.info("Track is missing progress or duration")
-        return None
+    Unlike the old live-progress poller (which could silently drop a poll
+    and rely on the next tick catching the same live moment), this is now
+    the only writer of completed plays -- a dropped fetch risks a real gap,
+    not just a slightly-later capture, so transient failures get a bounded
+    retry instead of being swallowed.
+    """
+    params: dict[str, int] = {"limit": RECENTLY_PLAYED_PAGE_LIMIT}
+    if after_ms is not None:
+        params["after"] = after_ms
 
-    if wait_ms == 0:
-        return data
-
-    max_wait_ms = max_wait_seconds * 1000
-    if wait_ms > max_wait_ms:
-        logger.info(
-            "Track is %sms away from completion threshold; waiting for a later tick",
-            wait_ms,
+    for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
+        response = await client.get(
+            RECENTLY_PLAYED_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            params=params,
         )
+        if response.status_code == 200:
+            return response.json()
+
+        retryable = response.status_code == 429 or response.status_code >= 500
+        if retryable and attempt < MAX_FETCH_ATTEMPTS:
+            delay = RETRY_BACKOFF_SECONDS
+            if response.status_code == 429:
+                with contextlib.suppress(ValueError):
+                    delay = float(response.headers.get("Retry-After", RETRY_BACKOFF_SECONDS))
+            logger.warning(
+                "Recently-played fetch failed (%s), retrying in %.1fs (attempt %d/%d)",
+                response.status_code,
+                delay,
+                attempt,
+                MAX_FETCH_ATTEMPTS,
+            )
+            await asyncio.sleep(delay)
+            continue
+
+        logger.error("Error fetching recently-played: %s - %s", response.status_code, response.text)
         return None
 
-    logger.info("Waiting %.1fs to re-check completion threshold", wait_ms / 1000)
-    await asyncio.sleep(wait_ms / 1000)
-
-    updated = await _fetch_current_playback(client, access_token)
-    if not updated:
-        return None
-
-    updated_track = updated["item"]
-    if updated_track["id"] != track["id"]:
-        logger.info("Track changed before completion threshold")
-        return None
-
-    if not _is_complete_enough(updated.get("progress_ms"), updated_track.get("duration_ms")):
-        logger.info(
-            "Track is still before completion threshold after re-check: %s/%sms",
-            updated.get("progress_ms"),
-            updated_track.get("duration_ms"),
-        )
-        return None
-
-    return updated
+    return None
 
 
-async def fetch_and_store_recent_tracks(max_wait_seconds: int = 0):
-    """Store the current track once playback is close enough to complete.
+async def _fetch_all_pages(
+    client: httpx.AsyncClient, access_token: str, after_ms: int
+) -> list[dict]:
+    """Page forward from `after_ms` until caught up or MAX_PAGES_PER_RUN hit."""
+    items: list[dict] = []
+    cursor = after_ms
 
-    Spotify's recently-played endpoint does not expose skipped/completed state.
-    Polling currently-playing lets us avoid counting obvious skips in cron data.
+    for _ in range(MAX_PAGES_PER_RUN):
+        page = await _fetch_recently_played_page(client, access_token, cursor)
+        if page is None:
+            break
+
+        page_items = page.get("items", [])
+        items.extend(page_items)
+
+        if len(page_items) < RECENTLY_PLAYED_PAGE_LIMIT:
+            break
+
+        next_cursor = page.get("cursors", {}).get("after")
+        if not next_cursor:
+            break
+        cursor = int(next_cursor)
+
+    return items
+
+
+async def sync_recent_plays() -> RecentPlaysSyncResult | None:
+    """Reconcile completed plays since the last run.
+
+    Idempotent (dedup against existing `streams` rows via
+    app.services.recent_plays_sync), so it's safe to call from both the
+    external cron endpoint and the local dev loop without cross-process
+    coordination -- a redundant concurrent run just re-derives "nothing
+    new" instead of racing to write. The lock below only avoids wasted
+    duplicate work within a single process.
     """
     if _sync_lock.locked():
-        logger.info("Playback completion sync already running")
-        return
+        logger.info("Recent plays sync already running")
+        return None
 
     async with _sync_lock:
-        await _fetch_and_store_recent_tracks(max_wait_seconds)
+        return await _sync_recent_plays()
 
 
-async def _fetch_and_store_recent_tracks(max_wait_seconds: int) -> None:
+async def _sync_recent_plays() -> RecentPlaysSyncResult | None:
     db = SessionLocal()
-    logger.info("🔄 Starting playback completion sync...")
+    logger.info("🔄 Starting recent plays sync...")
 
     try:
-        # Get Spotify client
+        after_ms = cursor_epoch_ms(db)
+        if after_ms is None:
+            # Cold start: don't reach back into Spotify's history, which may
+            # overlap what historical import already covered -- establish a
+            # baseline and pick up from here on the next run.
+            seed_cursor_to_now(db)
+            logger.info("Recent plays sync cursor seeded; nothing to process yet")
+            return None
+
         spotify_client = await get_spotify_client()
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            data = await _fetch_current_playback(client, spotify_client.access_token)
-            if not data:
-                return
-
-            data = await _wait_for_completion_window(
-                client,
-                spotify_client.access_token,
-                data,
-                max_wait_seconds,
-            )
-            if not data:
-                return
-
-            track = data["item"]
-            progress_ms = data.get("progress_ms")
+            items = await _fetch_all_pages(client, spotify_client.access_token, after_ms)
+            if not items:
+                logger.info("No new recently-played items")
+                return None
 
             async def fetch_artist_details(artist_id: str) -> dict | None:
                 artist_response = await client.get(
@@ -163,26 +153,23 @@ async def _fetch_and_store_recent_tracks(max_wait_seconds: int) -> None:
                     return None
                 return artist_response.json()
 
-            result = await store_completed_play(
+            result = await process_recently_played_items(
                 db,
-                track,
-                progress_ms=progress_ms,
+                items,
                 fetch_artist_details=fetch_artist_details,
                 report_issue=_log_ingest_issue,
             )
 
-            if result.duplicate:
-                logger.info("Current completed play already exists")
-                return
-
             logger.info(
-                "✅ Synced: 1 stream, %s tracks, %s artists",
-                result.new_tracks,
-                result.new_artists,
+                "✅ Recent plays sync: %d stored, %d rejected (below ratio), %d duplicate",
+                result.inserted,
+                result.rejected_ratio,
+                result.duplicates,
             )
+            return result
 
     except Exception as e:
-        logger.error(f"Error syncing recent tracks: {e}", exc_info=True)
+        logger.error(f"Error syncing recent plays: {e}", exc_info=True)
         db.rollback()
         raise
     finally:

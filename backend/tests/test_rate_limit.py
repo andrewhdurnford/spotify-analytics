@@ -233,7 +233,7 @@ class TestCronSyncRateLimit:
             patch("app.services.cron_auth.settings", settings),
             patch("app.main.settings", settings),
             patch(
-                "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
+                "app.tasks.sync_recent_tracks.sync_recent_plays",
                 new_callable=AsyncMock,
             ),
         ):
@@ -254,7 +254,7 @@ class TestCronSyncRateLimit:
             patch("app.services.cron_auth.settings", settings),
             patch("app.main.settings", settings),
             patch(
-                "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
+                "app.tasks.sync_recent_tracks.sync_recent_plays",
                 new_callable=AsyncMock,
             ),
         ):

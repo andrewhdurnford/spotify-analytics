@@ -95,6 +95,9 @@ class SyncStatusResponse(BaseModel):
     # Naive UTC completion time of the last related-tracks rollup rebuild.
     # None means it has never run (post-migration backfill still pending).
     related_tracks_rollup_last_rebuilt_at: datetime | None = None
+    # Naive UTC completion time of the last recently-played reconciliation
+    # sync. None means it has never run.
+    recent_plays_last_synced_at: datetime | None = None
 
 
 class CronSyncResponse(BaseModel):

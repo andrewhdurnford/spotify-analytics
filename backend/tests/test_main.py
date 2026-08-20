@@ -77,7 +77,7 @@ class TestCronSyncTracks:
             patch("app.services.cron_auth.settings", Settings(cron_secret="test-secret-123")),
             patch("app.main.settings", Settings(cron_secret="test-secret-123")),
             patch(
-                "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
+                "app.tasks.sync_recent_tracks.sync_recent_plays",
                 new_callable=AsyncMock,
             ) as mock_sync,
         ):
@@ -97,7 +97,7 @@ class TestCronSyncTracks:
             patch("app.services.cron_auth.settings", Settings(cron_secret="test-secret-123")),
             patch("app.main.settings", Settings(cron_secret="test-secret-123")),
             patch(
-                "app.tasks.sync_recent_tracks.fetch_and_store_recent_tracks",
+                "app.tasks.sync_recent_tracks.sync_recent_plays",
                 new_callable=AsyncMock,
             ) as mock_sync,
         ):
