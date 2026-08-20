@@ -4,7 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
-import { fetcher } from '@/app/lib/fetcher';
+import { localFetcher } from '@/app/lib/fetcher';
 
 interface CurrentlyPlayingData {
   is_playing: boolean;
@@ -61,9 +61,9 @@ export default function CurrentlyPlaying({
   timeframe,
   date,
 }: CurrentlyPlayingProps) {
-  const { data: currentlyPlaying } = useSWR<CurrentlyPlayingData>(
-    '/api/top/currently-playing',
-    fetcher,
+  const { data: currentlyPlaying, mutate } = useSWR<CurrentlyPlayingData>(
+    '/api/currently-playing',
+    localFetcher,
     {
       refreshInterval: 15_000,
       revalidateOnFocus: true,
@@ -93,6 +93,33 @@ export default function CurrentlyPlaying({
     }, 1000);
     return () => clearInterval(interval);
   }, [currentlyPlaying?.is_playing, currentlyPlaying?.duration_ms, currentlyPlaying?.track_name]);
+
+  // Re-poll right as the track is expected to end, instead of leaving the
+  // bar pinned at full until the next scheduled 15s tick. Anchored to the
+  // server-reported progress_ms (not the locally-ticked one) so it
+  // re-derives cleanly on every revalidation instead of accumulating drift.
+  useEffect(() => {
+    if (
+      !currentlyPlaying?.is_playing ||
+      currentlyPlaying.progress_ms == null ||
+      currentlyPlaying.duration_ms == null
+    ) {
+      return;
+    }
+    const remainingMs = currentlyPlaying.duration_ms - currentlyPlaying.progress_ms;
+    // Small buffer past the deadline so Spotify's own playback state has
+    // actually advanced to the next track by the time we ask.
+    const timeout = setTimeout(() => {
+      mutate();
+    }, Math.max(remainingMs, 0) + 500);
+    return () => clearTimeout(timeout);
+  }, [
+    currentlyPlaying?.is_playing,
+    currentlyPlaying?.progress_ms,
+    currentlyPlaying?.duration_ms,
+    currentlyPlaying?.track_name,
+    mutate,
+  ]);
 
   if (!currentlyPlaying?.is_playing) {
     return <div className="flex items-center" />;
