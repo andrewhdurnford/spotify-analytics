@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -182,6 +183,10 @@ app.add_middleware(
     allow_methods=CORS_ALLOW_METHODS,
     allow_headers=CORS_ALLOW_HEADERS,
 )
+
+# JSON responses compress well (dashboard/history payloads are the bulk of
+# egress); this cuts response bytes without touching route logic.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 @app.middleware("http")
