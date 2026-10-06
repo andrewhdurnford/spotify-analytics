@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 async def local_playback_sync_loop() -> None:
-    """Run playback sync in-process for local/dev environments."""
+    """Run recently-played sync in-process (home server, local dev)."""
     from .tasks.sync_recent_tracks import fetch_and_store_recent_tracks
 
     interval_seconds = max(5, settings.local_sync_interval_seconds)
@@ -42,7 +42,7 @@ async def local_playback_sync_loop() -> None:
 
     while True:
         try:
-            await fetch_and_store_recent_tracks(max_wait_seconds=settings.sync_max_wait_seconds)
+            await fetch_and_store_recent_tracks()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -239,7 +239,7 @@ async def cron_sync_tracks(authorization: str = Header(None)):
 
     try:
         logger.info("Starting cron sync...")
-        await fetch_and_store_recent_tracks(max_wait_seconds=settings.sync_max_wait_seconds)
+        await fetch_and_store_recent_tracks()
         logger.info("Cron sync completed successfully")
         return CronSyncResponse(status="success", message="Tracks synced successfully")
     except Exception as e:

@@ -1,6 +1,6 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -8,92 +8,108 @@ from sqlalchemy.orm import Session
 
 from app.models import Artist, Stream, Track
 from app.services.dashboard_cache import dashboard_cache
+from app.services.ingest import (
+    StreamingRecord,
+    classify_new_records,
+    load_existing_streams,
+    parse_spotify_date,
+)
 from app.services.ingest_errors import IssueReporter, spotify_api_issue
-
-DUPLICATE_GRACE = timedelta(seconds=30)
 
 ArtistDetailsFetcher = Callable[[str], Awaitable[dict[str, Any] | None]]
 Warn = Callable[[str], None]
 
 
 @dataclass(frozen=True)
-class StoreCompletedPlayResult:
-    stored: bool
-    duplicate: bool
+class StoreRecentPlaysResult:
+    inserted: int
+    duplicates: int
     new_tracks: int
     new_artists: int
 
 
-async def store_completed_play(
+async def store_recently_played(
     db: Session,
-    track: dict[str, Any],
+    items: list[dict[str, Any]],
     *,
-    progress_ms: int,
-    played_at: datetime | None = None,
     fetch_artist_details: ArtistDetailsFetcher,
     warn: Warn | None = None,
     report_issue: IssueReporter | None = None,
-) -> StoreCompletedPlayResult:
-    """Persist a completed current-playback observation."""
-    played_at = played_at or datetime.now(UTC).replace(tzinfo=None)
+) -> StoreRecentPlaysResult:
+    """Persist plays from GET /me/player/recently-played not stored yet.
 
-    if _has_duplicate_stream(db, track["id"], played_at, progress_ms):
-        return StoreCompletedPlayResult(
-            stored=False,
-            duplicate=True,
-            new_tracks=0,
-            new_artists=0,
+    Spotify only lists plays that ran to completion -- skips are left out --
+    and `played_at` is when the play ended, the same convention as `ts` in
+    the history export. So entries are stored as-is. Anything already
+    present (an earlier run, a history import, a copy from the standby, or a
+    row from the old live poller, stamped a few seconds before the end) is
+    caught by the same fuzzy 30s window historical import uses.
+    """
+    plays = [
+        (parse_spotify_date(item["played_at"]), item["track"])
+        for item in items
+        if item.get("track")
+        and item["track"].get("id")
+        and item["track"].get("type", "track") == "track"
+    ]
+    if not plays:
+        return StoreRecentPlaysResult(inserted=0, duplicates=0, new_tracks=0, new_artists=0)
+
+    records = [
+        StreamingRecord(
+            track_name=track["name"],
+            artist_name=track["artists"][0]["name"] if track.get("artists") else "Unknown",
+            album_name=track.get("album", {}).get("name"),
+            played_at=played_at,
+            duration_ms=track.get("duration_ms") or 0,
+            track_id=track["id"],
+            artist_id=track["artists"][0]["id"] if track.get("artists") else "",
         )
-
-    new_tracks = _ensure_track(db, track, played_at)
-    new_artists = await _ensure_artists(
+        for played_at, track in plays
+    ]
+    existing = load_existing_streams(
         db,
-        track,
-        fetch_artist_details=fetch_artist_details,
-        warn=warn,
-        report_issue=report_issue,
+        min(played_at for played_at, _ in plays),
+        max(played_at for played_at, _ in plays),
     )
-    # db.commit() flushes the new Stream row and, via the before_flush hook
+    classified = classify_new_records(records, existing, fuzzy=True)
+    new_keys = {(record.track_id, record.played_at) for record in classified.to_add}
+
+    new_tracks = 0
+    new_artists = 0
+    for played_at, track in sorted(plays, key=lambda play: play[0]):
+        if (track["id"], played_at) not in new_keys:
+            continue
+        new_tracks += _ensure_track(db, track, played_at)
+        new_artists += await _ensure_artists(
+            db,
+            track,
+            fetch_artist_details=fetch_artist_details,
+            warn=warn,
+            report_issue=report_issue,
+        )
+        db.add(_stream_from_playback(track, played_at))
+
+    # db.commit() flushes the new Stream rows and, via the before_flush hook
     # registered in app.models, the matching daily_listening_stats /
     # daily_track_stats rollup rows in the same transaction. If rollup
     # maintenance raises, the flush fails and nothing here is persisted —
     # roll back explicitly so a half-applied attempt doesn't linger on the
     # session for the next request that reuses it.
-    db.add(_stream_from_playback(track, played_at))
     try:
         db.commit()
     except Exception:
         db.rollback()
         raise
-    dashboard_cache.clear()
+    if new_keys:
+        dashboard_cache.clear()
 
-    return StoreCompletedPlayResult(
-        stored=True,
-        duplicate=False,
+    return StoreRecentPlaysResult(
+        inserted=len(new_keys),
+        duplicates=len(plays) - len(new_keys),
         new_tracks=new_tracks,
         new_artists=new_artists,
     )
-
-
-def _has_duplicate_stream(
-    db: Session,
-    track_id: str,
-    played_at: datetime,
-    progress_ms: int,
-) -> bool:
-    estimated_started_at = played_at - timedelta(milliseconds=progress_ms)
-    duplicate_start = estimated_started_at - DUPLICATE_GRACE
-    duplicate_end = played_at + DUPLICATE_GRACE
-
-    existing_stream = db.execute(
-        select(Stream).where(
-            Stream.track_id == track_id,
-            Stream.played_at >= duplicate_start,
-            Stream.played_at <= duplicate_end,
-        )
-    ).scalar_one_or_none()
-
-    return existing_stream is not None
 
 
 def _ensure_track(db: Session, track: dict[str, Any], first_played_at: datetime) -> int:

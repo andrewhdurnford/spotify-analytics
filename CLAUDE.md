@@ -64,8 +64,8 @@ Notes:
 - The root `.env` is required for the direct backend run.
 - `SPOTIFY_REDIRECT_URI` is filtered out in the direct-run command because the
   current backend settings reject unknown `.env` keys.
-- If `ENABLE_LOCAL_SYNC=true`, the backend will poll Spotify current playback
-  while it is running.
+- If `ENABLE_LOCAL_SYNC=true`, the backend will sync Spotify recently-played
+  every minute while it is running.
 
 ## Backend Conventions
 
@@ -92,7 +92,9 @@ Notes:
 
 - Dashboard play stats are based on rows in `streams`.
 - Historical imports should ignore skipped/non-completed export rows.
-- Cron/local sync should only count current playback after it is near completion.
+- Cron/local sync stores plays from `/me/player/recently-played`, which only
+  lists completed plays (skips are left out). Its `played_at` is end-of-play,
+  matching the export's `ts`, and is stored verbatim.
 - Existing DB rows do not store `skipped` or `reason_end`, so historical correction requires reimporting/export reconciliation.
 
 ## Safety
