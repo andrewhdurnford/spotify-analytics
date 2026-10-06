@@ -7,7 +7,8 @@ that takes over automatically whenever the home server is offline.
               Vercel frontend
         tries home, falls back to Render
            │                       │
-   api.<domain> (tunnel)     Render backend
+  api.<domain>/spotify       Render backend
+   (tunnel → Caddy)                │
            │                       │
   home backend ── shared Postgres  Supabase
                  (one instance,
@@ -29,6 +30,12 @@ that takes over automatically whenever the home server is offline.
 All database traffic goes through Supabase's session pooler, so IPv6 isn't
 needed.
 
+**One tunnel and one proxy for the whole machine.** The host's `cloudflared`
+service sends all of `api.andrewdurnford.com` to Caddy on `localhost:8080`
+(`deploy/home/caddy/`), which routes by path prefix: `/spotify/*` goes to this
+app with the prefix stripped. Apps join the `proxy` Docker network under a
+unique alias (`spotify-api` here). Adding an app never touches the tunnel.
+
 **One Postgres for the whole machine.** `deploy/home/postgres/` runs a single
 instance that every app on the laptop shares. Each app gets its own database
 and login role, and reaches the instance as host `postgres` on the `pg` Docker
@@ -49,18 +56,31 @@ sudo systemctl enable docker
 git clone <repo> ~/spotify-analytics
 ```
 
-### 2. Cloudflare Tunnel
+### 2. Cloudflare Tunnel (once per machine)
 
 Your domain's DNS has to be on Cloudflare. The free plan works: move the
 nameservers there and recreate the Vercel records.
 
-Zero Trust → Networks → Tunnels → Create tunnel (Cloudflared). Copy the token,
-then add a public hostname:
+Zero Trust → Networks → Tunnels → Create tunnel (Cloudflared), and install it
+on the host as a service (`cloudflared service install <token>`). Then add one
+published application route, and no others for this hostname:
 
-- Hostname: `api.andrewdurnford.com`
-- Service: `HTTP` → `backend:8000`
+- Hostname: `api.andrewdurnford.com`, path blank
+- Service: `HTTP` → `localhost:8080`
 
-### 3. Shared Postgres (once per machine)
+### 3. Shared Caddy proxy (once per machine)
+
+Skip this if another app already set it up.
+
+```bash
+cp -r ~/spotify-analytics/deploy/home/caddy ~/caddy
+cd ~/caddy && docker compose up -d
+```
+
+`~/caddy/Caddyfile` is now the machine's routing table; edit that copy, not
+the repo's. Until the app is up, `/spotify/*` returns 502.
+
+### 4. Shared Postgres (once per machine)
 
 Skip this if another app already set it up.
 
@@ -74,7 +94,7 @@ docker compose up -d
 Keep the shared instance on Postgres 17 or newer. Supabase runs 17, and
 restoring its dumps into an older server can fail.
 
-### 4. This app's database and role
+### 5. This app's database and role
 
 Replace `<password>` with a fresh one from `openssl rand -hex 24`:
 
@@ -88,7 +108,7 @@ Other apps follow the same pattern with their own role and database. The
 `spotify` role owns only its own database, so apps can't read each other's
 data.
 
-### 5. Configure and start
+### 6. Configure and start
 
 ```bash
 cd ~/spotify-analytics
@@ -100,10 +120,11 @@ docker compose -f docker-compose.home.yml --env-file .env.home up -d --build
 Check it's reachable:
 
 ```bash
-curl https://api.andrewdurnford.com/health
+curl http://localhost:8080/spotify/health
+curl https://api.andrewdurnford.com/spotify/health
 ```
 
-### 6. Cron jobs
+### 7. Cron jobs
 
 Run `crontab -e` and add:
 
@@ -117,17 +138,17 @@ Cron uses the laptop's timezone. `30 9` is 09:30 UTC (about 4–5am Eastern) on 
 UTC machine. While the push runs (about a minute), Render's requests stall, so
 schedule it when nobody's browsing.
 
-### 7. Vercel
+### 8. Vercel
 
 Set these env vars, then redeploy. The `NEXT_PUBLIC_*` values get baked in at
 build time.
 
 | Variable | Value |
 | --- | --- |
-| `API_URL`, `NEXT_PUBLIC_API_URL` | `https://api.andrewdurnford.com` |
+| `API_URL`, `NEXT_PUBLIC_API_URL` | `https://api.andrewdurnford.com/spotify` |
 | `API_FALLBACK_URL`, `NEXT_PUBLIC_API_FALLBACK_URL` | the Render backend URL |
 
-### 8. Render / Supabase / cron-job.org
+### 9. Render / Supabase / cron-job.org
 
 No changes. Keep both cron-job.org jobs pointed at Render.
 

@@ -1,0 +1,21 @@
+# One handle_path block per app. handle_path strips the prefix, so each app
+# serves its usual routes (/health, /api/...) unchanged. Upstream names are
+# the network aliases apps register on the `proxy` network.
+#
+# Reload after editing:
+#   cd ~/caddy && docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+
+:80 {
+	# The real client IP comes from Cloudflare's header; replacing
+	# X-Forwarded-For (instead of appending) means a client can't spoof it,
+	# so backends can trust it for rate limiting.
+	handle_path /spotify/* {
+		reverse_proxy spotify-api:8000 {
+			header_up X-Forwarded-For {http.request.header.Cf-Connecting-IP}
+		}
+	}
+
+	handle {
+		respond "not found" 404
+	}
+}

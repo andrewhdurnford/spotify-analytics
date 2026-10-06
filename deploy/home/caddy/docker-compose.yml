@@ -1,0 +1,34 @@
+# Shared reverse proxy for every app on the home server. Not specific to this
+# repo: copy this directory somewhere permanent (e.g. ~/caddy) and run it from
+# there, so it outlives any one app.
+#
+#   cd ~/caddy && docker compose up -d
+#
+# The host's cloudflared sends all of api.<domain> to localhost:8080; Caddy
+# routes by path prefix to each app, which joins the external `proxy` network
+# under a unique alias (see deploy/home/README.md).
+
+name: caddy
+
+services:
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    restart: unless-stopped
+    # Localhost only: cloudflared is the sole entry point, never the LAN.
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    name: proxy
+
+volumes:
+  caddy_data:
+  caddy_config:
