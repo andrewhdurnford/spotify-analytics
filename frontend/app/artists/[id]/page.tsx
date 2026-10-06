@@ -1,10 +1,9 @@
 import type { ArtistDetailResponse } from '@/app/types';
 import { snapToAvailablePeriod } from '@/app/lib/timeframe';
 import ArtistPage from './ArtistPage';
+import { apiFetch } from '@/app/lib/api';
 
 export const dynamic = 'force-dynamic';
-
-const API_URL = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 function getCurrentMonthStart() {
   const now = new Date();
@@ -18,7 +17,7 @@ async function fetchArtist(
 ): Promise<ArtistDetailResponse | null> {
   const params = new URLSearchParams({ timeframe });
   if (date) params.set('date', date);
-  const res = await fetch(`${API_URL}/api/artists/${id}?${params}`);
+  const res = await apiFetch(`/api/artists/${id}?${params}`);
   if (!res.ok) return null;
   return res.json();
 }

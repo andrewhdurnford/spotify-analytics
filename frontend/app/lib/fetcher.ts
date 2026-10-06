@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { apiFetch } from './api';
 
 async function parseJsonResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -15,7 +15,7 @@ async function parseJsonResponse<T>(res: Response): Promise<T> {
  * (e.g. "/api/top/songs?timeframe=month&date=2025-01-01").
  */
 export async function fetcher<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`);
+  const res = await apiFetch(path);
   return parseJsonResponse<T>(res);
 }
 

@@ -15,6 +15,13 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str
+    # Remote databases (Supabase) must use TLS. A self-hosted Postgres on the
+    # same Docker network as the backend can opt out.
+    database_require_ssl: bool = True
+    # Standby database (Supabase) used by the home-server backup scripts:
+    # merge_from_backup pulls plays the standby recorded while this one was
+    # offline. Unused by the API itself.
+    backup_database_url: str = ""
 
     # CORS
     frontend_url: str = "http://localhost:3000"
@@ -41,19 +48,20 @@ class Settings(BaseSettings):
     db_connect_timeout_seconds: int = 5
     db_statement_timeout_ms: int = 10_000
 
-    @field_validator("database_url")
-    @classmethod
-    def validate_database_url(cls, value: str) -> str:
-        lowered = value.lower()
-        if "sslmode=require" not in lowered:
-            raise ValueError("DATABASE_URL must include sslmode=require")
-        return value
-
     @field_validator("environment", mode="before")
     @classmethod
     def normalize_environment(cls, value: str) -> str:
         """Keep production-only safeguards from failing open on casing."""
         return value.strip().lower()
+
+    @model_validator(mode="after")
+    def validate_database_ssl(self) -> "Settings":
+        if self.database_require_ssl and "sslmode=require" not in self.database_url.lower():
+            raise ValueError(
+                "DATABASE_URL must include sslmode=require (set DATABASE_REQUIRE_SSL=false "
+                "only for a database on the backend's private network)"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_production_requirements(self) -> "Settings":

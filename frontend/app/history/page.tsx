@@ -1,9 +1,8 @@
 import HistoryPage from './HistoryPage';
 import type { RecentlyPlayedResponse } from '@/app/types';
+import { apiFetch } from '@/app/lib/api';
 
 export const dynamic = 'force-dynamic';
-
-const API_URL = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const EMPTY_HISTORY: RecentlyPlayedResponse = {
   items: [],
@@ -16,7 +15,7 @@ export default async function HistoryRoutePage() {
   let initialData: RecentlyPlayedResponse = EMPTY_HISTORY;
 
   try {
-    const historyRes = await fetch(`${API_URL}/api/top/recently-played?page=1&page_size=100`);
+    const historyRes = await apiFetch(`/api/top/recently-played?page=1&page_size=100`);
     if (historyRes.ok) {
       initialData = await historyRes.json();
     }

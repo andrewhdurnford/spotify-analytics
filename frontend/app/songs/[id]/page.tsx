@@ -1,10 +1,9 @@
 import type { TrackDetailResponse } from '@/app/types';
 import { snapToAvailablePeriod } from '@/app/lib/timeframe';
 import SongPage from './SongPage';
+import { apiFetch } from '@/app/lib/api';
 
 export const dynamic = 'force-dynamic';
-
-const API_URL = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 function getCurrentMonthStart() {
   const now = new Date();
@@ -17,18 +16,18 @@ async function fetchTrack(
   timeframe: string,
   date: string | null,
 ): Promise<TrackDetailResponse | null> {
-  let url: string;
+  let path: string;
   if (isNameFallback) {
     const [trackName, artistName] = decodeURIComponent(id).split('--');
     const params = new URLSearchParams({ track_name: trackName, artist_name: artistName, timeframe });
     if (date) params.set('date', date);
-    url = `${API_URL}/api/tracks/by-name?${params}`;
+    path = `/api/tracks/by-name?${params}`;
   } else {
     const params = new URLSearchParams({ timeframe });
     if (date) params.set('date', date);
-    url = `${API_URL}/api/tracks/${id}?${params}`;
+    path = `/api/tracks/${id}?${params}`;
   }
-  const res = await fetch(url);
+  const res = await apiFetch(path);
   if (!res.ok) return null;
   return res.json();
 }

@@ -9,10 +9,8 @@ import type {
   Song,
   TimelineResponse,
 } from '@/app/types';
+import { apiFetch } from '@/app/lib/api';
 import { DASHBOARD_CACHE_CONTROL, DASHBOARD_NO_STORE_CACHE_CONTROL } from './cache';
-
-const API_URL =
-  process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 /**
  * Sections combined by this endpoint, in the order used to build the
@@ -120,7 +118,7 @@ function normalizeDashboardQuery(searchParams: URLSearchParams): string | null {
 
 async function fetchSection<T>(path: string): Promise<SectionResult<T>> {
   try {
-    const res = await fetch(`${API_URL}${path}`, { cache: 'no-store' });
+    const res = await apiFetch(path, { cache: 'no-store' });
     if (!res.ok) {
       return { ok: false, data: null };
     }
