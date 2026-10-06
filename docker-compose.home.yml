@@ -1,0 +1,59 @@
+# Home-server deployment: primary backend, exposed through a Cloudflare
+# Tunnel. Render + Supabase stay up as the standby. The database lives in the
+# shared Postgres instance (deploy/home/postgres), reached over the `pg`
+# network. Setup and day-to-day commands: deploy/home/README.md
+#
+#   docker compose -f docker-compose.home.yml --env-file .env.home up -d --build
+
+name: spotify-home
+
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    networks:
+      - default
+      - pg
+    # No published ports: only cloudflared reaches the backend.
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env.home}
+      # The shared instance is only reachable on the private `pg` network.
+      DATABASE_REQUIRE_SSL: "false"
+      BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL:?set BACKUP_DATABASE_URL in .env.home}
+      ENVIRONMENT: production
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:?set ALLOWED_HOSTS in .env.home}
+      # Safe because the only client that can connect is cloudflared.
+      FORWARDED_ALLOW_IPS: "*"
+      CRON_SECRET: ${CRON_SECRET:?set CRON_SECRET in .env.home}
+      FRONTEND_URL: ${FRONTEND_URL:-https://spotify.andrewdurnford.com}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET}
+      SPOTIFY_REFRESH_TOKEN: ${SPOTIFY_REFRESH_TOKEN}
+      # The home server records plays itself, polling current playback.
+      ENABLE_LOCAL_SYNC: "true"
+      LOCAL_SYNC_INTERVAL_SECONDS: ${LOCAL_SYNC_INTERVAL_SECONDS:-30}
+      SYNC_MAX_WAIT_SECONDS: ${SYNC_MAX_WAIT_SECONDS:-25}
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env.home}
+    depends_on:
+      - backend
+
+  # psql/pg_dump for the deploy/home scripts; never started by `up`.
+  # postgres:17 because pg_dump must be at least as new as Supabase's server.
+  pgtools:
+    image: postgres:17
+    profiles: ["tools"]
+    networks:
+      - pg
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL}
+
+networks:
+  pg:
+    external: true

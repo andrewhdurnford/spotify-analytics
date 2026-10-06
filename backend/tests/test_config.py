@@ -71,3 +71,15 @@ class TestAllowedHostsList:
             allowed_hosts="*",
         )
         assert settings.allowed_hosts_list() == ["*"]
+
+
+class TestDatabaseSsl:
+    def test_url_without_sslmode_fails_by_default(self):
+        with pytest.raises(ValidationError):
+            Settings(database_url="postgresql://test:test@db/test")
+
+    def test_url_without_sslmode_allowed_when_ssl_not_required(self):
+        settings = Settings(
+            database_url="postgresql://test:test@db/test", database_require_ssl=False
+        )
+        assert settings.database_url == "postgresql://test:test@db/test"

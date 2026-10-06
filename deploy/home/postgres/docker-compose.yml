@@ -1,0 +1,39 @@
+# Shared Postgres for every app on the home server. Not specific to this
+# repo: copy this directory somewhere permanent (e.g. ~/postgres) and run it
+# from there, so it outlives any one app.
+#
+#   cd ~/postgres && docker compose up -d
+#
+# Each app gets its own database and login role (see deploy/home/README.md)
+# and reaches this instance as host `postgres` on the external `pg` network.
+
+name: postgres
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    restart: unless-stopped
+    # .env holds POSTGRES_PASSWORD, the superuser password -- for admin only;
+    # apps use their own roles. Compose refuses to start without the file.
+    env_file: .env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - pg
+    # Uncomment to reach it from the laptop itself (psql, GUI clients).
+    # Bound to localhost only: never expose Postgres on the LAN/internet.
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  pg:
+    name: pg
+
+volumes:
+  pgdata:
