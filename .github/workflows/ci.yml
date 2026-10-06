@@ -75,3 +75,19 @@ jobs:
 
       - name: Build image
         run: docker build -t backend-koyeb-check ./backend
+
+  deploy-home:
+    name: Deploy (home server)
+    # Pushes to main only: this job runs on the home server's self-hosted
+    # runner, which has Docker access, so it must never run PR code.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend, backend-docker-build]
+    runs-on: [self-hosted, ad-server-2005]
+    concurrency:
+      group: deploy-home
+      cancel-in-progress: false
+    steps:
+      # Deploys from the long-lived checkout that holds .env.home, not the
+      # runner's workspace; no actions/checkout needed.
+      - name: Deploy
+        run: ~/spotify-analytics/deploy/home/deploy.sh "$GITHUB_SHA"

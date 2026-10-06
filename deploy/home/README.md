@@ -154,16 +154,27 @@ No changes. Keep both cron-job.org jobs pointed at Render.
 
 ## Day to day
 
+- **Deploys are automatic.** When CI passes on `main`, the `deploy-home` job
+  runs `deploy.sh` on this machine's self-hosted runner: build, swap, migrate,
+  health check, and roll back to the previous commit if the new one isn't
+  healthy. The swap takes a few seconds; the frontend fails over to Render
+  meanwhile. Same thing by hand:
+  ```bash
+  deploy/home/deploy.sh            # origin/main, or pass a commit
+  ```
+  Rollbacks don't undo migrations, so keep them compatible with the previous
+  release.
 - **Migrations** go to both databases, or the nightly push fails on schema
-  mismatch:
+  mismatch. `deploy.sh` migrates home; Render migrates Supabase as before.
+- **Runner:** `~/actions-runner/spotify-analytics`, run as a user systemd
+  service (lingering enabled so it starts at boot without a login):
   ```bash
-  docker compose -f docker-compose.home.yml --env-file .env.home exec backend alembic upgrade head
+  systemctl --user status actions-runner-spotify-analytics
+  journalctl --user -u actions-runner-spotify-analytics -f
   ```
-  Render runs its migrations against Supabase as before.
-- **Deploy new code:**
-  ```bash
-  git pull && docker compose -f docker-compose.home.yml --env-file .env.home up -d --build
-  ```
+  Setup, once per repo: download the runner, `./config.sh --url
+  <repo> --token <token> --labels ad-server-2005`, then a user unit running
+  `run.sh` and `loginctl enable-linger`.
 - **After an outage longer than 14 days:** run the merge by hand with a longer
   window:
   ```bash
