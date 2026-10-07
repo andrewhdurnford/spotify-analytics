@@ -2,10 +2,11 @@
 
 The home server and the standby (Render + Supabase) each record playback
 independently, so after a home-server outage the standby holds plays the home
-database never saw. Both sides stamp `played_at` with their own clock at the
-moment they noticed the track finishing, so the same play lands a few seconds
-apart on each side -- matching is by track within a tolerance window, not by
-exact timestamp.
+database never saw. Both sides now store Spotify's recently-played
+`played_at` verbatim, but rows from the old live poller were stamped with each
+side's own clock as it noticed the track finishing, so the same play can land
+a few seconds apart on each side -- matching is by track within a tolerance
+window, not by exact timestamp.
 
 The tolerance is half the track's duration (floored at MIN_MATCH_TOLERANCE):
 two genuine plays of the same track are at least one full duration apart, so a

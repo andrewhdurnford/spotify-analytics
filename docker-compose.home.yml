@@ -35,10 +35,9 @@ services:
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID}
       SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET}
       SPOTIFY_REFRESH_TOKEN: ${SPOTIFY_REFRESH_TOKEN}
-      # The home server records plays itself, polling current playback.
+      # The home server records plays itself from recently-played.
       ENABLE_LOCAL_SYNC: "true"
-      LOCAL_SYNC_INTERVAL_SECONDS: ${LOCAL_SYNC_INTERVAL_SECONDS:-30}
-      SYNC_MAX_WAIT_SECONDS: ${SYNC_MAX_WAIT_SECONDS:-25}
+      LOCAL_SYNC_INTERVAL_SECONDS: ${LOCAL_SYNC_INTERVAL_SECONDS:-60}
 
   # psql/pg_dump for the deploy/home scripts; never started by `up`.
   # postgres:17 because pg_dump must be at least as new as Supabase's server.

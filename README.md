@@ -64,8 +64,9 @@ for the migration workflow.
   `app/scripts/backfill_related_tracks.py`.
 - Related-tracks rollups rebuild on a schedule via
   `POST /api/cron/rebuild-related-tracks`, separate from playback sync.
-- Local dev can run an in-process playback sync loop instead of an external
-  cron: set `ENABLE_LOCAL_SYNC=true` in `.env`.
+- Plays are recorded from Spotify's recently-played history, which only lists
+  completed plays. Local dev can run the sync in-process instead of an
+  external cron: set `ENABLE_LOCAL_SYNC=true` in `.env` (every 60s).
 - Behind a reverse proxy in production, set `FORWARDED_ALLOW_IPS` so per-IP
   rate limiting resolves the real client address; `CRON_SECRET` and
   `ALLOWED_HOSTS` are required when `ENVIRONMENT=production`.

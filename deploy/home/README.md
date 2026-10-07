@@ -15,8 +15,8 @@ that takes over automatically whenever the home server is offline.
                   db per app)
 ```
 
-- **Both sides record plays.** The home backend polls Spotify itself
-  (`ENABLE_LOCAL_SYNC=true`), and cron-job.org keeps calling Render's
+- **Both sides record plays.** The home backend syncs Spotify's
+  recently-played itself (`ENABLE_LOCAL_SYNC=true`), and cron-job.org keeps calling Render's
   `/api/cron/sync-tracks` as it does today. So plays get recorded even while
   the home server is down.
 - **Hourly + at boot** (`hourly.sh`): the home server copies plays that only
