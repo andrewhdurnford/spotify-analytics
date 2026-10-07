@@ -1,8 +1,7 @@
 """Small in-process, bounded TTL/LRU cache used across the API.
 
-Used for dashboard aggregate queries and the currently-playing lookup. A
-single bounded pool keeps total memory use
-predictable regardless of how many distinct query-parameter combinations
+Used for dashboard and detail aggregate queries. A single bounded pool
+keeps total memory use predictable regardless of how many distinct query-parameter combinations
 callers request (arbitrary timeframe/date/limit/track_id combinations
 cannot grow the cache without bound -- once `maxsize` entries are held, the
 least-recently-used entry is evicted to make room for a new one).
@@ -12,10 +11,9 @@ current process after writes; out-of-process imports and multi-worker
 deployments rely on the short TTLs below for freshness.
 """
 
-import asyncio
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Awaitable, Callable, Hashable, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import Callable, Hashable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from threading import Lock
 from time import monotonic
@@ -28,7 +26,6 @@ _MISS = object()
 
 ALL_TIME_TTL_SECONDS = 15 * 60
 FILTERED_TTL_SECONDS = 60
-CURRENTLY_PLAYING_TTL_SECONDS = 12
 RECENTLY_PLAYED_TTL_SECONDS = 60
 DETAIL_TTL_SECONDS = 5 * 60
 
@@ -62,7 +59,6 @@ class DashboardCache:
         # key -> [lock, waiter_count]; entries are dropped once the last
         # in-flight loader for that key finishes, so these can't accumulate.
         self._sync_loads: dict[Hashable, list] = {}
-        self._async_loads: dict[Hashable, list] = {}
 
     @property
     def maxsize(self) -> int:
@@ -96,32 +92,6 @@ class DashboardCache:
                 return cached  # type: ignore[return-value]
 
             value = loader()
-            if value is not None or cache_none:
-                with self._lock:
-                    self._store(key, ttl_seconds, value)
-            return value
-
-    async def get_or_set_async(
-        self,
-        key: Hashable,
-        ttl_seconds: int,
-        loader: Callable[[], Awaitable[T]],
-        cache_none: bool = True,
-    ) -> T:
-        """Async counterpart of `get_or_set` for async loaders (e.g. outbound
-        HTTP calls). The lock is only held around the dict access, never
-        across the `await`, so it's safe to share with the sync API.
-        """
-        cached = self._get_fresh(key)
-        if cached is not _MISS:
-            return cached  # type: ignore[return-value]
-
-        async with self._single_flight_async(key):
-            cached = self._get_fresh(key)
-            if cached is not _MISS:
-                return cached  # type: ignore[return-value]
-
-            value = await loader()
             if value is not None or cache_none:
                 with self._lock:
                     self._store(key, ttl_seconds, value)
@@ -162,15 +132,6 @@ class DashboardCache:
         finally:
             self._release_load_lock(self._sync_loads, key, entry)
 
-    @asynccontextmanager
-    async def _single_flight_async(self, key: Hashable) -> AsyncIterator[None]:
-        entry = self._checkout_load_lock(self._async_loads, key, asyncio.Lock)
-        try:
-            async with entry[0]:
-                yield
-        finally:
-            self._release_load_lock(self._async_loads, key, entry)
-
     def _store(self, key: Hashable, ttl_seconds: int, value: object) -> None:
         """Insert/refresh an entry and evict LRU entries over capacity.
 
@@ -186,9 +147,7 @@ class DashboardCache:
             self._entries.clear()
 
     def _delete_expired(self, now: float) -> None:
-        expired_keys = [
-            key for key, (expires_at, _) in self._entries.items() if expires_at <= now
-        ]
+        expired_keys = [key for key, (expires_at, _) in self._entries.items() if expires_at <= now]
         for key in expired_keys:
             self._entries.pop(key, None)
 

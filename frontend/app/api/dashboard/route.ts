@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
 import type {
   Album,
   Artist,
@@ -128,7 +128,7 @@ async function fetchSection<T>(path: string): Promise<SectionResult<T>> {
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const query = normalizeDashboardQuery(searchParams);
   if (query === null) {

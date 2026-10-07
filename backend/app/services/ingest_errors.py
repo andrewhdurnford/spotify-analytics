@@ -8,7 +8,6 @@ import httpx
 
 class IngestErrorCategory(StrEnum):
     API = "api"
-    DATABASE = "database"
     RATE_LIMIT = "rate_limit"
     UNKNOWN = "unknown"
 

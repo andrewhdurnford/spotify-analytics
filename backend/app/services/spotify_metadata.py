@@ -21,7 +21,6 @@ class HttpResponse(Protocol):
 
 
 HttpGet = Callable[..., HttpResponse]
-Warn = Callable[[str], None]
 
 
 def get_missing_track_ids(db: Session) -> list[str]:
@@ -88,7 +87,6 @@ def upsert_tracks_from_spotify(
     track_ids: list[str],
     *,
     http_get: HttpGet = httpx.get,
-    warn: Warn | None = None,
     report_issue: IssueReporter | None = None,
 ) -> int:
     """Fetch track metadata in Spotify batches and insert/update tracks."""
@@ -135,8 +133,6 @@ def upsert_tracks_from_spotify(
             )
             if report_issue:
                 report_issue(issue)
-            if warn:
-                warn(issue.message)
             db.rollback()
             continue
 
@@ -171,7 +167,6 @@ def upsert_artists_from_spotify(
     artist_ids: list[str],
     *,
     http_get: HttpGet = httpx.get,
-    warn: Warn | None = None,
     report_issue: IssueReporter | None = None,
 ) -> int:
     """Fetch artist metadata in Spotify batches and insert/update artists."""
@@ -213,8 +208,6 @@ def upsert_artists_from_spotify(
             )
             if report_issue:
                 report_issue(issue)
-            if warn:
-                warn(issue.message)
             db.rollback()
             continue
 

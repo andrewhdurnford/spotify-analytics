@@ -21,7 +21,6 @@ The frontend communicates with the FastAPI backend at the following endpoints:
 - `GET /api/top/stats` - Listening totals for the selected timeframe
 - `GET /api/top/available-periods` - Available years and date ranges
 - `GET /api/top/recently-played` - Paginated listening history
-- `GET /api/top/currently-playing` - Currently playing track (polled every 5 seconds)
 - `GET /api/artists/{id}` - Artist detail with top songs, albums, and timeline
 - `GET /api/tracks/{id}` - Track detail by Spotify ID
 - `GET /api/tracks/by-name` - Track detail fallback for streams without Spotify IDs

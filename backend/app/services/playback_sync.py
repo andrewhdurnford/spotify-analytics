@@ -17,7 +17,6 @@ from app.services.ingest import (
 from app.services.ingest_errors import IssueReporter, spotify_api_issue
 
 ArtistDetailsFetcher = Callable[[str], Awaitable[dict[str, Any] | None]]
-Warn = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -33,7 +32,6 @@ async def store_recently_played(
     items: list[dict[str, Any]],
     *,
     fetch_artist_details: ArtistDetailsFetcher,
-    warn: Warn | None = None,
     report_issue: IssueReporter | None = None,
 ) -> StoreRecentPlaysResult:
     """Persist plays from GET /me/player/recently-played not stored yet.
@@ -85,7 +83,6 @@ async def store_recently_played(
             db,
             track,
             fetch_artist_details=fetch_artist_details,
-            warn=warn,
             report_issue=report_issue,
         )
         db.add(_stream_from_playback(track, played_at))
@@ -144,7 +141,6 @@ async def _ensure_artists(
     track: dict[str, Any],
     *,
     fetch_artist_details: ArtistDetailsFetcher,
-    warn: Warn | None,
     report_issue: IssueReporter | None,
 ) -> int:
     new_artists = 0
@@ -166,8 +162,6 @@ async def _ensure_artists(
             )
             if report_issue:
                 report_issue(issue)
-            if warn:
-                warn(issue.message)
             continue
 
         if not artist_full:

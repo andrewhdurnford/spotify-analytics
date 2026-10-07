@@ -174,26 +174,6 @@ class TestGeneralAnalyticsRateLimit:
             assert resp.status_code == 200
 
 
-class TestCurrentlyPlayingRateLimit:
-    def test_returns_429_after_10_requests_per_minute(self, client):
-        from unittest.mock import AsyncMock
-
-        from app.dependencies import get_spotify_client
-        from app.main import app
-
-        mock_client = AsyncMock()
-        mock_client.get_currently_playing.return_value = {"is_playing": False}
-        app.dependency_overrides[get_spotify_client] = lambda: mock_client
-        try:
-            for _ in range(10):
-                resp = client.get("/api/top/currently-playing")
-                assert resp.status_code == 200
-            blocked = client.get("/api/top/currently-playing")
-            assert blocked.status_code == 429
-        finally:
-            app.dependency_overrides.pop(get_spotify_client, None)
-
-
 class TestRelatedTracksRateLimit:
     def test_returns_429_after_5_requests_per_minute(self, client, db):
         _seed(db)
