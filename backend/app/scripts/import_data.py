@@ -1,3 +1,13 @@
+"""Bulk-import Spotify streaming history exports, then fetch metadata.
+
+Dedup is exact-match only, so this is for a fresh database. To add an export
+on top of plays the sync already recorded, use import_file.py (fuzzy dedup)
+per file, then fetch metadata for the new tracks and artists with:
+
+    python -m app.scripts.import_data --metadata-only
+"""
+
+import argparse
 import json
 import os
 import sys
@@ -114,66 +124,7 @@ def import_all_spotify_data(data_dir: str = "/data"):
         print(f"{'=' * 60}")
         print(f"Total records imported: {total_imported}")
 
-        # Update tracks table with Spotify metadata
-        spotify_token = os.getenv("SPOTIFY_TOKEN") or fetch_spotify_token_from_client_credentials()
-        if spotify_token:
-            to_fetch = get_missing_track_ids(db)
-            print(f"Fetching metadata for {len(to_fetch)} tracks from Spotify...")
-            upserted = upsert_tracks_from_spotify(
-                db,
-                spotify_token,
-                to_fetch,
-                report_issue=print_ingest_issue,
-            )
-            print(f"  Upserted/updated {upserted} tracks")
-
-            to_fetch_artists = get_missing_artist_ids(db)
-            print(f"Fetching metadata for {len(to_fetch_artists)} artists from Spotify...")
-            artists_upserted = upsert_artists_from_spotify(
-                db,
-                spotify_token,
-                to_fetch_artists,
-                report_issue=print_ingest_issue,
-            )
-            print(f"  Upserted/updated {artists_upserted} artists")
-        else:
-            print(
-                "No SPOTIFY_TOKEN and no client credentials available — skipping Spotify metadata enrichment"
-            )
-
-        db.commit()
-
-        # Show some stats
-        total = db.scalar(select(func.count()).select_from(Stream))
-        print(f"Total records in database: {total}")
-
-        if total > 0:
-            earliest = db.execute(
-                select(Stream).order_by(Stream.played_at.asc())
-            ).scalar_one_or_none()
-            latest = db.execute(
-                select(Stream).order_by(Stream.played_at.desc())
-            ).scalar_one_or_none()
-            unique_tracks = db.scalar(select(func.count(Stream.track_name.distinct())))
-            unique_artists = db.scalar(select(func.count(Stream.artist_name.distinct())))
-
-            print("\nDatabase Stats:")
-            print(f"  Date range: {earliest.played_at} to {latest.played_at}")
-            print(f"  Unique tracks: {unique_tracks}")
-            print(f"  Unique artists: {unique_artists}")
-
-            print("Backfilling missing artist IDs from Spotify API...")
-            track_ids_to_fetch = get_track_ids_missing_stream_artist(db)
-
-            if track_ids_to_fetch:
-                # This will update both tracks and streams tables
-                upsert_tracks_from_spotify(
-                    db,
-                    spotify_token,
-                    track_ids_to_fetch,
-                    report_issue=print_ingest_issue,
-                )
-                print(f"Backfilled artist IDs from {len(track_ids_to_fetch)} tracks")
+        enrich_metadata(db)
 
     except Exception as e:
         print(f"Error during import: {e}")
@@ -182,7 +133,96 @@ def import_all_spotify_data(data_dir: str = "/data"):
         db.close()
 
 
+def enrich_metadata(db: Session):
+    """Fetch Spotify metadata for tracks and artists that streams reference but
+    the tracks/artists tables lack, then backfill missing stream artist IDs."""
+
+    spotify_token = os.getenv("SPOTIFY_TOKEN") or fetch_spotify_token_from_client_credentials()
+    if not spotify_token:
+        print(
+            "No SPOTIFY_TOKEN and no client credentials available — skipping Spotify metadata enrichment"
+        )
+        return
+
+    to_fetch = get_missing_track_ids(db)
+    print(f"Fetching metadata for {len(to_fetch)} tracks from Spotify...")
+    upserted = upsert_tracks_from_spotify(
+        db,
+        spotify_token,
+        to_fetch,
+        report_issue=print_ingest_issue,
+    )
+    print(f"  Upserted/updated {upserted} tracks")
+
+    to_fetch_artists = get_missing_artist_ids(db)
+    print(f"Fetching metadata for {len(to_fetch_artists)} artists from Spotify...")
+    artists_upserted = upsert_artists_from_spotify(
+        db,
+        spotify_token,
+        to_fetch_artists,
+        report_issue=print_ingest_issue,
+    )
+    print(f"  Upserted/updated {artists_upserted} artists")
+
+    db.commit()
+
+    # Show some stats
+    total = db.scalar(select(func.count()).select_from(Stream))
+    print(f"Total records in database: {total}")
+
+    if total > 0:
+        earliest = db.execute(
+            select(Stream).order_by(Stream.played_at.asc()).limit(1)
+        ).scalar_one_or_none()
+        latest = db.execute(
+            select(Stream).order_by(Stream.played_at.desc()).limit(1)
+        ).scalar_one_or_none()
+        unique_tracks = db.scalar(select(func.count(Stream.track_name.distinct())))
+        unique_artists = db.scalar(select(func.count(Stream.artist_name.distinct())))
+
+        print("\nDatabase Stats:")
+        print(f"  Date range: {earliest.played_at} to {latest.played_at}")
+        print(f"  Unique tracks: {unique_tracks}")
+        print(f"  Unique artists: {unique_artists}")
+
+        print("Backfilling missing artist IDs from Spotify API...")
+        track_ids_to_fetch = get_track_ids_missing_stream_artist(db)
+
+        if track_ids_to_fetch:
+            # This will update both tracks and streams tables
+            upsert_tracks_from_spotify(
+                db,
+                spotify_token,
+                track_ids_to_fetch,
+                report_issue=print_ingest_issue,
+            )
+            print(f"Backfilled artist IDs from {len(track_ids_to_fetch)} tracks")
+
+
+def enrich_metadata_only():
+    db = SessionLocal()
+    try:
+        enrich_metadata(db)
+    except Exception as e:
+        print(f"Error during metadata enrichment: {e}")
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
-    print("Starting Spotify data import...")
-    print("Looking for JSON files in /data")
-    import_all_spotify_data()
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--metadata-only",
+        action="store_true",
+        help="Skip importing; only fetch metadata for tracks/artists missing it",
+    )
+    args = parser.parse_args()
+
+    if args.metadata_only:
+        enrich_metadata_only()
+    else:
+        print("Starting Spotify data import...")
+        print("Looking for JSON files in /data")
+        import_all_spotify_data()
