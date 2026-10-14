@@ -67,14 +67,14 @@ jobs:
         run: npm run build
 
   backend-docker-build:
-    name: Backend Docker Build (Koyeb)
+    name: Backend Docker Build
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Build image
-        run: docker build -t backend-koyeb-check ./backend
+        run: docker build -t backend-docker-check ./backend
 
   deploy-home:
     name: Deploy (home server)
