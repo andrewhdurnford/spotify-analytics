@@ -1,8 +1,8 @@
-# Spotify Analytics Frontend
+# Frontend
 
-Next.js webapp to see my Spotify listening statistics. See my top songs,
-albums, artists, recent history, detail pages, and current playback.
-
+Next.js app for the Spotify Analytics dashboard: top songs, albums and
+artists, recent history, detail pages, and current playback. See the
+[root README](../README.md) for the full architecture and setup.
 
 ## Tech Stack
 
