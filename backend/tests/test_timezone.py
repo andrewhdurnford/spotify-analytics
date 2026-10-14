@@ -11,9 +11,7 @@ from app.services.timezone import (
 
 
 def test_utc_timestamp_converts_to_previous_toronto_day():
-    assert utc_naive_to_display(datetime(2026, 7, 9, 2, 5)) == datetime(
-        2026, 7, 8, 22, 5
-    )
+    assert utc_naive_to_display(datetime(2026, 7, 9, 2, 5)) == datetime(2026, 7, 8, 22, 5)
 
 
 def test_toronto_boundaries_follow_daylight_saving_time():

@@ -14,6 +14,7 @@ CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
 
+
 # Step 1: Get authorization URL
 def get_auth_url():
     if not CLIENT_ID:
@@ -26,6 +27,7 @@ def get_auth_url():
         "scope": "user-read-currently-playing user-read-playback-state user-read-recently-played playlist-modify-private playlist-modify-public",
     }
     return f"https://accounts.spotify.com/authorize?{urlencode(params)}"
+
 
 # Step 2: Exchange code for tokens
 def get_tokens(code):
@@ -48,6 +50,7 @@ def get_tokens(code):
     )
 
     return response.json()
+
 
 if __name__ == "__main__":
     print("\n1. Visit this URL and authorize:")
