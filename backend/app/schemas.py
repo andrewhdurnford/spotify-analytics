@@ -62,21 +62,6 @@ class RecentlyPlayedResponse(BaseModel):
     has_next: bool
 
 
-# --- Currently playing ---
-
-
-class CurrentlyPlaying(BaseModel):
-    is_playing: bool
-    track_id: str | None = None
-    track_name: str | None = None
-    artist_id: str | None = None
-    artist_name: str | None = None
-    album_name: str | None = None
-    album_image: str | None = None
-    progress_ms: int | None = None
-    duration_ms: int | None = None
-
-
 # --- Generic responses ---
 
 

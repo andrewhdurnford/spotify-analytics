@@ -77,7 +77,6 @@ class RateLimiter:
 
 # One bucket per concern, per the roadmap thresholds.
 general_limiter = RateLimiter(max_requests=60, window_seconds=60)
-currently_playing_limiter = RateLimiter(max_requests=10, window_seconds=60)
 related_tracks_limiter = RateLimiter(max_requests=5, window_seconds=60)
 # Unauthenticated cron attempts get a deliberately tiny budget; requests that
 # present a valid CRON_SECRET are counted separately so a flood of bad tokens
@@ -87,7 +86,6 @@ cron_authenticated_limiter = RateLimiter(max_requests=10, window_seconds=60)
 
 _all_limiters = (
     general_limiter,
-    currently_playing_limiter,
     related_tracks_limiter,
     cron_limiter,
     cron_authenticated_limiter,

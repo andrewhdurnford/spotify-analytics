@@ -1,7 +1,6 @@
 import logging
 from datetime import date as date_type
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import (
     JSON,
@@ -17,7 +16,7 @@ from sqlalchemy import (
     inspect,
     text,
 )
-from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .database import Base
 
@@ -38,10 +37,6 @@ class Track(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    streams: Mapped[list["Stream"]] = relationship(
-        back_populates="track", foreign_keys="Stream.track_id"
-    )
-
 
 class Artist(Base):
     __tablename__ = "artists"
@@ -52,10 +47,6 @@ class Artist(Base):
     genres: Mapped[list] = mapped_column(JSON, default=list)
     popularity: Mapped[int | None] = mapped_column(Integer, default=None)
     image_url: Mapped[str | None] = mapped_column(String(1000), default=None)
-
-    streams: Mapped[list["Stream"]] = relationship(
-        back_populates="artist", foreign_keys="Stream.artist_id"
-    )
 
 
 class Stream(Base):
@@ -72,13 +63,6 @@ class Stream(Base):
     )
     artist_id: Mapped[str | None] = mapped_column(
         String(100), ForeignKey("artists.spotify_id"), default=None
-    )
-
-    track: Mapped[Optional["Track"]] = relationship(
-        back_populates="streams", foreign_keys=[track_id]
-    )
-    artist: Mapped[Optional["Artist"]] = relationship(
-        back_populates="streams", foreign_keys=[artist_id]
     )
 
     __table_args__ = (

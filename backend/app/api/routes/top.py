@@ -3,13 +3,10 @@ from sqlalchemy.orm import Session
 
 from ...database import get_db
 from ...dependencies import (
-    get_spotify_client,
-    require_currently_playing_rate_limit,
     require_general_rate_limit,
 )
 from ...schemas import (
     AvailablePeriods,
-    CurrentlyPlaying,
     ListeningStats,
     RecentlyPlayedResponse,
     TimelineResponse,
@@ -20,7 +17,6 @@ from ...schemas import (
 from ...services import top as top_service
 from ...services.dashboard_cache import (
     ALL_TIME_TTL_SECONDS,
-    CURRENTLY_PLAYING_TTL_SECONDS,
     RECENTLY_PLAYED_TTL_SECONDS,
     cache_window_key,
     dashboard_cache,
@@ -165,29 +161,4 @@ def get_recently_played(
         key,
         RECENTLY_PLAYED_TTL_SECONDS,
         lambda: top_service.get_recently_played(db, parsed_start_date, page, page_size),
-    )
-
-
-@router.get(
-    "/currently-playing",
-    response_model=CurrentlyPlaying,
-    dependencies=[Depends(require_currently_playing_rate_limit)],
-)
-async def get_currently_playing(
-    spotify_service=Depends(get_spotify_client),
-):
-    async def _load():
-        currently_playing = await spotify_service.get_currently_playing()
-        if currently_playing:
-            return (
-                currently_playing
-                if isinstance(currently_playing, dict)
-                else currently_playing.model_dump()
-            )
-        return {"is_playing": False}
-
-    return await dashboard_cache.get_or_set_async(
-        ("currently-playing",),
-        CURRENTLY_PLAYING_TTL_SECONDS,
-        _load,
     )

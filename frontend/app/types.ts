@@ -63,7 +63,7 @@ export interface PlayCountOverTime {
   play_count: number;
 }
 
-export interface ArtistDetail {
+interface ArtistDetail {
   spotify_id: string;
   name: string;
   image_url: string | null;
@@ -81,7 +81,7 @@ export interface ArtistDetailResponse {
   available_periods: AvailablePeriods;
 }
 
-export interface AlbumDetail {
+interface AlbumDetail {
   album_name: string;
   artist_name: string;
   artist_id: string | null;
@@ -98,7 +98,7 @@ export interface AlbumDetailResponse {
   available_periods: AvailablePeriods;
 }
 
-export interface TrackDetail {
+interface TrackDetail {
   spotify_id: string | null;
   name: string;
   artist_name: string;

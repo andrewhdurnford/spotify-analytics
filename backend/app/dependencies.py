@@ -10,7 +10,6 @@ from .services.rate_limit import (
     RateLimiter,
     cron_authenticated_limiter,
     cron_limiter,
-    currently_playing_limiter,
     general_limiter,
     related_tracks_limiter,
 )
@@ -65,57 +64,14 @@ class SpotifyClient:
     def __init__(self, access_token: str):
         self.access_token = access_token
 
-    async def get_currently_playing(self):
-        async with httpx.AsyncClient(timeout=SPOTIFY_HTTP_TIMEOUT_SECONDS) as client:
-            response = await client.get(
-                "https://api.spotify.com/v1/me/player/currently-playing",
-                headers={"Authorization": f"Bearer {self.access_token}"},
-            )
-
-            logger.debug(f"Spotify API response: {response.status_code}")
-
-            if response.status_code == 204:
-                logger.info("🎵 No track currently playing")
-                return {"is_playing": False}
-
-            if response.status_code == 200:
-                data = response.json()
-                track_name = data.get("item", {}).get("name", "Unknown")
-                artist_name = ", ".join(
-                    [artist["name"] for artist in data.get("item", {}).get("artists", [])]
-                )
-                logger.info(f"🎵 Currently playing: {track_name} by {artist_name}")
-
-                # Format the response
-                if data.get("is_playing") and data.get("item"):
-                    item = data["item"]
-                    artists = item.get("artists", [])
-                    return {
-                        "is_playing": True,
-                        "track_id": item.get("id"),
-                        "track_name": item.get("name"),
-                        "artist_id": artists[0].get("id") if artists else None,
-                        "artist_name": ", ".join([artist["name"] for artist in artists]),
-                        "album_name": item.get("album", {}).get("name"),
-                        "album_image": (item.get("album", {}).get("images", [{}])[0].get("url")),
-                        "progress_ms": data.get("progress_ms"),
-                        "duration_ms": item.get("duration_ms"),
-                    }
-                else:
-                    return {"is_playing": False}
-
-            logger.error(f"❌ Unexpected Spotify API response: {response.status_code}")
-            response.raise_for_status()
-            return {"is_playing": False}
-
 
 # --- Rate limiting -----------------------------------------------------
 #
 # Thin FastAPI dependencies wrapping the RateLimiter instances in
 # `app.services.rate_limit`. Each route opts into exactly the limiter(s)
-# that describe it (general analytics / currently-playing / related-tracks
-# / cron), so requests are only ever counted against the buckets that
-# actually apply to that endpoint.
+# that describe it (general analytics / related-tracks / cron), so
+# requests are only ever counted against the buckets that actually apply
+# to that endpoint.
 
 
 def _client_key(request: Request) -> str:
@@ -161,10 +117,6 @@ def require_general_rate_limit(request: Request) -> None:
     # key by route also prevents the dashboard aggregator's parallel calls to
     # six different endpoints from consuming one shared allowance.
     _enforce_rate_limit(general_limiter, f"{_client_key(request)}:{_route_key(request)}")
-
-
-def require_currently_playing_rate_limit(request: Request) -> None:
-    _enforce_rate_limit(currently_playing_limiter, _client_key(request))
 
 
 def require_related_tracks_rate_limit(request: Request) -> None:
