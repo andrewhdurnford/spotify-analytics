@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import useSWR from 'swr';
 import { localFetcher } from '@/app/lib/fetcher';
 
@@ -73,15 +73,17 @@ export default function CurrentlyPlaying({
     },
   );
 
-  const [progressMs, setProgressMs] = useState(0);
-  const lastSyncRef = useRef<number>(Date.now());
+  const serverProgressMs = currentlyPlaying?.progress_ms;
+  const trackName = currentlyPlaying?.track_name;
+  const [progressMs, setProgressMs] = useState(serverProgressMs ?? 0);
+  const [synced, setSynced] = useState({ serverProgressMs, trackName });
 
-  useEffect(() => {
-    if (currentlyPlaying?.progress_ms != null) {
-      setProgressMs(currentlyPlaying.progress_ms);
-      lastSyncRef.current = Date.now();
-    }
-  }, [currentlyPlaying?.progress_ms, currentlyPlaying?.track_name]);
+  // Snap the local progress to the server's whenever a revalidation reports a
+  // new position or track.
+  if (synced.serverProgressMs !== serverProgressMs || synced.trackName !== trackName) {
+    setSynced({ serverProgressMs, trackName });
+    if (serverProgressMs != null) setProgressMs(serverProgressMs);
+  }
 
   useEffect(() => {
     if (!currentlyPlaying?.is_playing || currentlyPlaying.duration_ms == null) {
